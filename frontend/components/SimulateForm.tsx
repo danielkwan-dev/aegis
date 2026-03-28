@@ -1,19 +1,40 @@
 "use client";
 
 import { useState, useRef } from "react";
+import ThreatBanner from "./ThreatBanner";
+import VisualizationWrapper from "./VisualizationWrapper";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+interface AnalysisResult {
+  status: string;
+  risk_level: string;
+  max_similarity: number;
+  category_scores: Record<string, number>;
+  signals: {
+    draft_text_length: number;
+    ocr_text: string | null;
+    exif_metadata: Record<string, any> | null;
+    merged_length: number;
+  };
+  web: {
+    nodes: any[];
+    edges: any[];
+  };
+}
 
 export default function SimulateForm() {
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit() {
     setLoading(true);
     setResult(null);
+    setError(null);
 
     try {
       const formData = new FormData();
@@ -29,10 +50,15 @@ export default function SimulateForm() {
 
       const data = await res.json();
       console.log("Aegis response:", data);
-      setResult(JSON.stringify(data, null, 2));
+
+      if (data.status === "analyzed") {
+        setResult(data);
+      } else {
+        setError(data.message || "No analysis returned.");
+      }
     } catch (err) {
       console.error("Simulate error:", err);
-      setResult("Error connecting to backend. Is the FastAPI server running?");
+      setError("Error connecting to backend. Is the FastAPI server running?");
     } finally {
       setLoading(false);
     }
@@ -136,23 +162,61 @@ export default function SimulateForm() {
         {loading ? "Scanning..." : "Simulate Threat"}
       </button>
 
-      {/* Result */}
+      {/* Error */}
+      {error && (
+        <p style={{ color: "#f87171", fontSize: "0.85rem", marginTop: "1rem" }}>
+          {error}
+        </p>
+      )}
+
+      {/* Results */}
       {result && (
-        <pre
-          style={{
-            marginTop: "1.5rem",
-            padding: "1rem",
-            backgroundColor: "#111",
-            border: "1px solid #222",
-            borderRadius: "8px",
-            fontSize: "0.8rem",
-            color: "#aaa",
-            overflow: "auto",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {result}
-        </pre>
+        <div style={{ marginTop: "2rem" }}>
+          <ThreatBanner
+            riskLevel={result.risk_level}
+            maxSimilarity={result.max_similarity}
+            categoryScores={result.category_scores}
+          />
+          <VisualizationWrapper web={result.web} />
+
+          {/* Signal details (collapsed) */}
+          {result.signals.ocr_text && (
+            <div
+              style={{
+                padding: "0.75rem 1rem",
+                backgroundColor: "#111",
+                border: "1px solid #1a1a1a",
+                borderRadius: "8px",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <span style={{ color: "#06b6d4", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase" }}>
+                OCR Extracted Text
+              </span>
+              <p style={{ color: "#888", fontSize: "0.8rem", margin: "0.4rem 0 0", whiteSpace: "pre-wrap" }}>
+                {result.signals.ocr_text}
+              </p>
+            </div>
+          )}
+          {result.signals.exif_metadata && (
+            <div
+              style={{
+                padding: "0.75rem 1rem",
+                backgroundColor: "#111",
+                border: "1px solid #1a1a1a",
+                borderRadius: "8px",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <span style={{ color: "#f43f5e", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase" }}>
+                EXIF Metadata Leaked
+              </span>
+              <pre style={{ color: "#888", fontSize: "0.75rem", margin: "0.4rem 0 0", fontFamily: "monospace" }}>
+                {JSON.stringify(result.signals.exif_metadata, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
