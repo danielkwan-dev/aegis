@@ -1,33 +1,43 @@
 "use client";
 
 import { useState, useRef } from "react";
-import ThreatBanner from "./ThreatBanner";
-import VisualizationWrapper from "./VisualizationWrapper";
+import AuditResult from "./AuditResult";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface ExposureMap {
   total_data_points: number;
-  sensitive_entities: Record<string, number>;
+  unique_streets: number;
   known_locations: number;
+  unique_businesses: number;
+  tracked_activities: number;
+  day_patterns: number;
 }
 
 interface AnalysisResult {
   status: string;
-  risk_level: string;
-  max_similarity: number;
+  detected_entities: {
+    streets: string[];
+    places: string[];
+    businesses: string[];
+    times: string[];
+    coordinates: string[];
+  };
+  category_similarity: Record<string, number>;
   breach_probability: number;
-  entity_scores: Record<string, number>;
+  vulnerability_map: any[];
+  static_landmarks: any[];
+  entity_triplets: any[];
+  final_conclusion: string;
   signals: {
     draft_text_length: number;
     ocr_text: string | null;
+    ocr_high_value: any[] | null;
     exif_metadata: Record<string, any> | null;
+    time_context: any;
     merged_length: number;
   };
-  web: {
-    nodes: any[];
-    edges: any[];
-  };
+  web: { nodes: any[]; edges: any[] };
   exposure_map: ExposureMap;
   hex?: {
     runId?: string;
@@ -41,7 +51,15 @@ interface AnalysisResult {
 interface IngestResult {
   status: string;
   message: string;
+  detected_entities?: {
+    streets: string[];
+    places: string[];
+    businesses: string[];
+    times: string[];
+    coordinates: string[];
+  };
   exposure_map: ExposureMap;
+  final_conclusion?: string;
 }
 
 export default function SimulateForm() {
@@ -52,24 +70,23 @@ export default function SimulateForm() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
+  const [ingestEntities, setIngestEntities] = useState<string[]>([]);
   const [exposureMap, setExposureMap] = useState<ExposureMap | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const ingestFileRef = useRef<HTMLInputElement>(null);
 
-  // ── Ingest a data point ──
   const [ingestText, setIngestText] = useState("");
   const [ingestFile, setIngestFile] = useState<File | null>(null);
 
   async function handleIngest() {
     setIngesting(true);
     setIngestMsg(null);
+    setIngestEntities([]);
 
     try {
       const formData = new FormData();
       formData.append("text", ingestText);
-      if (ingestFile) {
-        formData.append("image", ingestFile);
-      }
+      if (ingestFile) formData.append("image", ingestFile);
 
       const res = await fetch(`${API_URL}/api/audit-ingest`, {
         method: "POST",
@@ -77,9 +94,20 @@ export default function SimulateForm() {
       });
 
       const data: IngestResult = await res.json();
-      console.log("Ingest response:", data);
       setIngestMsg(data.message || "Ingested.");
       setExposureMap(data.exposure_map);
+
+      // Collect detected entities for display
+      if (data.detected_entities) {
+        const ents: string[] = [
+          ...data.detected_entities.streets,
+          ...data.detected_entities.places,
+          ...data.detected_entities.businesses,
+          ...data.detected_entities.times,
+        ];
+        setIngestEntities(ents);
+      }
+
       setIngestText("");
       setIngestFile(null);
     } catch (err) {
@@ -90,7 +118,6 @@ export default function SimulateForm() {
     }
   }
 
-  // ── Analyze threat ──
   async function handleAnalyze() {
     setLoading(true);
     setResult(null);
@@ -99,9 +126,7 @@ export default function SimulateForm() {
     try {
       const formData = new FormData();
       formData.append("text", text);
-      if (file) {
-        formData.append("image", file);
-      }
+      if (file) formData.append("image", file);
 
       const res = await fetch(`${API_URL}/api/analyze-threat`, {
         method: "POST",
@@ -109,7 +134,6 @@ export default function SimulateForm() {
       });
 
       const data: AnalysisResult = await res.json();
-      console.log("Aegis response:", data);
       setExposureMap(data.exposure_map);
 
       if (data.status === "analyzed") {
@@ -128,30 +152,30 @@ export default function SimulateForm() {
   const inputStyle: React.CSSProperties = {
     width: "100%",
     padding: "0.75rem",
-    backgroundColor: "#111",
-    border: "1px solid #333",
-    borderRadius: "8px",
-    color: "#e0e0e0",
-    fontSize: "0.95rem",
+    backgroundColor: "#0d1117",
+    border: "1px solid #1e2228",
+    borderRadius: "6px",
+    color: "#c8ccd0",
+    fontSize: "0.85rem",
+    fontFamily: "inherit",
     outline: "none",
-    boxSizing: "border-box",
   };
 
-  const sectionHeader: React.CSSProperties = {
-    fontSize: "0.75rem",
+  const labelStyle: React.CSSProperties = {
+    fontSize: "0.6rem",
     fontWeight: 600,
-    letterSpacing: "0.05em",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
     marginBottom: "0.75rem",
   };
 
   return (
     <div>
-      {/* Exposure Map Stats */}
+      {/* Exposure Map Stats Bar */}
       {exposureMap && (
         <div
           style={{
-            padding: "0.75rem 1rem",
+            padding: "0.75rem 1.25rem",
             backgroundColor: "#0d1117",
             border: "1px solid #1a1a1a",
             borderRadius: "8px",
@@ -162,28 +186,31 @@ export default function SimulateForm() {
           }}
         >
           <div style={{ display: "flex", gap: "1.5rem" }}>
-            <div>
-              <div style={{ color: "#666", fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Data Points</div>
-              <div style={{ color: "#e0e0e0", fontSize: "1.25rem", fontWeight: 700 }}>{exposureMap.total_data_points}</div>
-            </div>
-            <div>
-              <div style={{ color: "#666", fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Known Locations</div>
-              <div style={{ color: "#e0e0e0", fontSize: "1.25rem", fontWeight: 700 }}>{exposureMap.known_locations}</div>
-            </div>
-            <div>
-              <div style={{ color: "#666", fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Entity Types</div>
-              <div style={{ color: "#e0e0e0", fontSize: "1.25rem", fontWeight: 700 }}>{Object.keys(exposureMap.sensitive_entities).length}</div>
-            </div>
+            {[
+              { label: "Data Points", value: exposureMap.total_data_points },
+              { label: "Streets", value: exposureMap.unique_streets },
+              { label: "Locations", value: exposureMap.known_locations },
+              { label: "Activities", value: exposureMap.tracked_activities },
+              { label: "Day Patterns", value: exposureMap.day_patterns },
+            ].map((stat) => (
+              <div key={stat.label}>
+                <div style={{ color: "#444", fontSize: "0.55rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  {stat.label}
+                </div>
+                <div style={{ color: "#c8ccd0", fontSize: "1.15rem", fontWeight: 700 }}>{stat.value}</div>
+              </div>
+            ))}
           </div>
-          <span style={{ color: "#333", fontSize: "0.7rem" }}>EXPOSURE MAP</span>
+          <span style={{ color: "#222", fontSize: "0.6rem", letterSpacing: "0.1em" }}>EXPOSURE MAP</span>
         </div>
       )}
 
-      {/* ── SECTION 1: Audit Ingest ── */}
-      <div style={{ marginBottom: "2.5rem", paddingBottom: "2rem", borderBottom: "1px solid #1a1a1a" }}>
-        <div style={{ ...sectionHeader, color: "#4ade80" }}>1. Build Security Baseline</div>
-        <p style={{ color: "#666", fontSize: "0.85rem", margin: "0 0 1rem" }}>
+      {/* STEP 1: Establish Baseline */}
+      <div style={{ marginBottom: "2.5rem", paddingBottom: "2rem", borderBottom: "1px solid #141618" }}>
+        <div style={{ ...labelStyle, color: "#16a34a" }}>STEP 1 // ESTABLISH BASELINE</div>
+        <p style={{ color: "#555", fontSize: "0.78rem", margin: "0 0 1rem", lineHeight: 1.5 }}>
           Feed your past posts, photos, and check-ins to build the exposure map.
+          The more data you provide, the more accurate the threat analysis becomes.
         </p>
 
         <textarea
@@ -191,7 +218,7 @@ export default function SimulateForm() {
           onChange={(e) => setIngestText(e.target.value)}
           placeholder="Paste a past post, caption, or check-in..."
           rows={3}
-          style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", marginBottom: "0.75rem" }}
+          style={{ ...inputStyle, resize: "vertical", marginBottom: "0.75rem" }}
         />
 
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
@@ -199,18 +226,19 @@ export default function SimulateForm() {
             type="button"
             onClick={() => ingestFileRef.current?.click()}
             style={{
-              padding: "0.4rem 1rem",
-              backgroundColor: "#1a1a1a",
-              border: "1px solid #333",
-              borderRadius: "6px",
-              color: "#ccc",
+              padding: "0.35rem 0.85rem",
+              backgroundColor: "#141618",
+              border: "1px solid #1e2228",
+              borderRadius: "5px",
+              color: "#888",
               cursor: "pointer",
-              fontSize: "0.8rem",
+              fontSize: "0.75rem",
+              fontFamily: "inherit",
             }}
           >
-            📎 Attach photo
+            + Attach photo
           </button>
-          <span style={{ color: "#666", fontSize: "0.8rem" }}>
+          <span style={{ color: "#444", fontSize: "0.75rem" }}>
             {ingestFile ? ingestFile.name : "No file"}
           </span>
           <input
@@ -226,39 +254,62 @@ export default function SimulateForm() {
           onClick={handleIngest}
           disabled={ingesting || (!ingestText && !ingestFile)}
           style={{
-            padding: "0.65rem 1.5rem",
-            backgroundColor: ingesting ? "#333" : "#1a3a1a",
-            color: ingesting ? "#888" : "#4ade80",
-            border: "1px solid #2d5a2d",
-            borderRadius: "8px",
+            padding: "0.6rem 1.5rem",
+            backgroundColor: ingesting ? "#141618" : "#0a1f0a",
+            color: ingesting ? "#555" : "#16a34a",
+            border: `1px solid ${ingesting ? "#1e2228" : "#16a34a30"}`,
+            borderRadius: "6px",
             fontWeight: 600,
-            fontSize: "0.9rem",
+            fontSize: "0.82rem",
+            fontFamily: "inherit",
             cursor: ingesting ? "not-allowed" : "pointer",
+            letterSpacing: "0.02em",
           }}
         >
-          {ingesting ? "Ingesting..." : "Ingest Data Point"}
+          {ingesting ? "Securing..." : "Secure Data Point"}
         </button>
 
         {ingestMsg && (
-          <span style={{ marginLeft: "1rem", color: "#4ade80", fontSize: "0.85rem" }}>
+          <span style={{ marginLeft: "0.75rem", color: "#16a34a", fontSize: "0.78rem" }}>
             {ingestMsg}
           </span>
         )}
+
+        {/* Detected entities from ingest */}
+        {ingestEntities.length > 0 && (
+          <div style={{ marginTop: "0.75rem", display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+            {ingestEntities.map((ent, i) => (
+              <span
+                key={i}
+                style={{
+                  padding: "0.15rem 0.45rem",
+                  backgroundColor: "#06b6d410",
+                  border: "1px solid #06b6d420",
+                  borderRadius: "3px",
+                  fontSize: "0.68rem",
+                  color: "#06b6d4",
+                }}
+              >
+                {ent}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* ── SECTION 2: Analyze Threat ── */}
-      <div style={{ ...sectionHeader, color: "#f87171" }}>2. Analyze Threat</div>
-      <p style={{ color: "#666", fontSize: "0.85rem", margin: "0 0 1rem" }}>
-        Test a new draft post against your baseline. Aegis will detect Identity Links
-        that could expose sensitive entities like Home, Work, or Daily Route.
+      {/* STEP 2: Pre-Post Analysis */}
+      <div style={{ ...labelStyle, color: "#dc2626" }}>STEP 2 // PRE-POST ANALYSIS</div>
+      <p style={{ color: "#555", fontSize: "0.78rem", margin: "0 0 1rem", lineHeight: 1.5 }}>
+        Paste your draft post below. Aegis will scan it against your baseline
+        to detect Identity Links that could expose sensitive patterns.
       </p>
 
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="Paste your draft post here..."
-        rows={6}
-        style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", marginBottom: "1rem" }}
+        rows={5}
+        style={{ ...inputStyle, resize: "vertical", marginBottom: "1rem" }}
       />
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" }}>
@@ -266,18 +317,19 @@ export default function SimulateForm() {
           type="button"
           onClick={() => fileRef.current?.click()}
           style={{
-            padding: "0.5rem 1.25rem",
-            backgroundColor: "#1a1a1a",
-            border: "1px solid #333",
-            borderRadius: "6px",
-            color: "#ccc",
+            padding: "0.35rem 0.85rem",
+            backgroundColor: "#141618",
+            border: "1px solid #1e2228",
+            borderRadius: "5px",
+            color: "#888",
             cursor: "pointer",
-            fontSize: "0.85rem",
+            fontSize: "0.75rem",
+            fontFamily: "inherit",
           }}
         >
-          📎 Attach image
+          + Attach image
         </button>
-        <span style={{ color: "#666", fontSize: "0.85rem" }}>
+        <span style={{ color: "#444", fontSize: "0.75rem" }}>
           {file ? file.name : "No file selected"}
         </span>
         <input
@@ -295,69 +347,29 @@ export default function SimulateForm() {
         style={{
           width: "100%",
           padding: "0.85rem",
-          backgroundColor: loading ? "#333" : "#fff",
-          color: loading ? "#888" : "#0a0a0a",
+          backgroundColor: loading ? "#141618" : "#dc2626",
+          color: loading ? "#555" : "#fff",
           border: "none",
-          borderRadius: "8px",
-          fontWeight: 600,
-          fontSize: "1rem",
+          borderRadius: "6px",
+          fontWeight: 700,
+          fontSize: "0.9rem",
+          fontFamily: "inherit",
           cursor: loading ? "not-allowed" : "pointer",
+          letterSpacing: "0.04em",
+          transition: "background-color 0.2s ease",
         }}
       >
-        {loading ? "Analyzing..." : "Analyze Threat"}
+        {loading ? "Scanning..." : "Run Threat Analysis"}
       </button>
 
       {error && (
-        <p style={{ color: "#f87171", fontSize: "0.85rem", marginTop: "1rem" }}>{error}</p>
+        <p style={{ color: "#dc2626", fontSize: "0.78rem", marginTop: "1rem" }}>{error}</p>
       )}
 
       {/* Results */}
       {result && (
         <div style={{ marginTop: "2rem" }}>
-          <ThreatBanner
-            riskLevel={result.risk_level}
-            maxSimilarity={result.max_similarity}
-            breachProbability={result.breach_probability}
-            entityScores={result.entity_scores}
-          />
-          <VisualizationWrapper web={result.web} hex={result.hex} />
-
-          {result.signals.ocr_text && (
-            <div
-              style={{
-                padding: "0.75rem 1rem",
-                backgroundColor: "#111",
-                border: "1px solid #1a1a1a",
-                borderRadius: "8px",
-                marginBottom: "0.75rem",
-              }}
-            >
-              <span style={{ color: "#06b6d4", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase" }}>
-                OCR Extracted Text
-              </span>
-              <p style={{ color: "#888", fontSize: "0.8rem", margin: "0.4rem 0 0", whiteSpace: "pre-wrap" }}>
-                {result.signals.ocr_text}
-              </p>
-            </div>
-          )}
-          {result.signals.exif_metadata && (
-            <div
-              style={{
-                padding: "0.75rem 1rem",
-                backgroundColor: "#111",
-                border: "1px solid #1a1a1a",
-                borderRadius: "8px",
-                marginBottom: "0.75rem",
-              }}
-            >
-              <span style={{ color: "#f43f5e", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase" }}>
-                EXIF Metadata Leaked
-              </span>
-              <pre style={{ color: "#888", fontSize: "0.75rem", margin: "0.4rem 0 0", fontFamily: "monospace" }}>
-                {JSON.stringify(result.signals.exif_metadata, null, 2)}
-              </pre>
-            </div>
-          )}
+          <AuditResult result={result} />
         </div>
       )}
     </div>
