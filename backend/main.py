@@ -29,8 +29,8 @@ app.add_middleware(
 )
 
 
-async def trigger_hex_run(graph_data: dict) -> dict | None:
-    """POST the graph data to Hex and return run metadata."""
+async def trigger_hex_run(analysis_result: dict) -> dict | None:
+    """POST analysis data to Hex and return run metadata."""
     if not HEX_API_TOKEN or not HEX_PROJECT_ID:
         return None
 
@@ -38,15 +38,36 @@ async def trigger_hex_run(graph_data: dict) -> dict | None:
         "Authorization": f"Bearer {HEX_API_TOKEN}",
         "Content-Type": "application/json",
     }
-    payload = {
-        "inputParams": {
-            "input_data": json.dumps(graph_data),
-        },
-    }
+
+    # Build inputParams — only include params that exist in the Hex project.
+    # If you haven't created input params in Hex yet, send empty dict to
+    # trigger a run with defaults. Add params in the Hex UI, then uncomment.
+    input_params = {}
+    try:
+        input_params = {
+            "aegis_data": json.dumps({
+                "nodes": analysis_result.get("web", {}).get("nodes", []),
+                "edges": analysis_result.get("web", {}).get("edges", []),
+                "breach_probability": analysis_result.get("breach_probability", 0),
+                "vulnerability_map": analysis_result.get("vulnerability_map", []),
+                "clustering": analysis_result.get("clustering", {}),
+                "exposure_map": analysis_result.get("exposure_map", {}),
+                "final_conclusion": analysis_result.get("final_conclusion", ""),
+            }),
+        }
+    except Exception:
+        input_params = {}
+
+    payload: dict = {}
+    if input_params:
+        payload["inputParams"] = input_params
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(HEX_API_URL, headers=headers, json=payload)
+            # If 422 (params not found in project), retry without params
+            if resp.status_code == 422:
+                resp = await client.post(HEX_API_URL, headers=headers, json={})
             resp.raise_for_status()
             data = resp.json()
             return {
@@ -55,6 +76,10 @@ async def trigger_hex_run(graph_data: dict) -> dict | None:
                 "runStatusUrl": data.get("runStatusUrl"),
                 "projectId": HEX_PROJECT_ID,
             }
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:500] if e.response else ""
+        print(f"[Aegis] Hex API {e.response.status_code}: {body}")
+        return {"error": f"{e.response.status_code}: {body}", "projectId": HEX_PROJECT_ID}
     except Exception as e:
         print(f"[Aegis] Hex API error: {e}")
         return {"error": str(e), "projectId": HEX_PROJECT_ID}
@@ -153,5 +178,10 @@ async def analyze(
         if image and image.filename:
             image_bytes = await image.read()
         result = analyze_threat(draft_text=text, image_bytes=image_bytes)
+
+    # Trigger Hex run for all analyzed results (demo + live)
+    if result.get("status") == "analyzed":
+        hex_result = await trigger_hex_run(result)
+        result["hex"] = hex_result
 
     return result
