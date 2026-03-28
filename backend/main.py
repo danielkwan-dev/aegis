@@ -133,9 +133,4 @@ async def analyze(
             image_bytes = await image.read()
         result = analyze_threat(draft_text=text, image_bytes=image_bytes)
 
-    # Trigger Hex run with the graph data
-    if result.get("status") == "analyzed":
-        hex_result = await trigger_hex_run(result["web"])
-        result["hex"] = hex_result
-
     return result

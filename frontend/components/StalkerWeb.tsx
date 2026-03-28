@@ -3,7 +3,6 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 
-// Dynamically import to avoid SSR issues with canvas
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
 
 interface WebNode {
@@ -15,8 +14,8 @@ interface WebNode {
   weight?: number;
   category?: string;
   similarity?: number;
-  text_preview?: string;
-  description?: string;
+  cluster_id?: number;
+  cluster_name?: string;
 }
 
 interface WebEdge {
@@ -33,19 +32,21 @@ interface StalkerWebProps {
   edges: WebEdge[];
 }
 
+// Cluster color palette
+const CLUSTER_COLORS = ["#c084fc", "#06b6d4", "#f59e0b", "#4ade80", "#f43f5e"];
+
 export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 680, height: 450 });
+  const [dimensions, setDimensions] = useState({ width: 680, height: 480 });
 
   useEffect(() => {
     if (!containerRef.current) return;
     const { clientWidth } = containerRef.current;
     if (clientWidth > 0) {
-      setDimensions({ width: clientWidth, height: 450 });
+      setDimensions({ width: clientWidth, height: 480 });
     }
   }, []);
 
-  // Build graph data in the shape react-force-graph expects
   const graphData = {
     nodes: nodes.map((n) => ({ ...n })),
     links: edges.map((e) => ({
@@ -62,22 +63,21 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     if (node.type === "post") return "#ff2222";
     if (node.type === "extraction") return "#06b6d4";
     if (node.type === "metadata") return "#f43f5e";
-    // History nodes: muted gray unless high similarity
-    if (node.similarity && node.similarity >= 0.2) {
-      return node.color || "#888";
+    // Color history nodes by cluster if available
+    if (node.cluster_id !== undefined) {
+      return CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
     }
+    if (node.similarity && node.similarity >= 0.2) return node.color || "#888";
     return "#444";
   }, []);
 
   const nodeSize = useCallback((node: any) => {
-    // Use weight field for sizing if available (0-1 scale)
     const w = node.weight ?? 0;
-    if (node.type === "post") return 14;
-    if (node.type === "metadata") return 6 + w * 14; // landmarks scale big
-    if (node.type === "extraction") return 6 + w * 10;
-    // History nodes scale by similarity or weight
+    if (node.type === "post") return 16;
+    if (node.type === "metadata") return 7 + w * 13;
+    if (node.type === "extraction") return 6 + w * 9;
     const sim = node.similarity ?? w;
-    return 4 + sim * 18;
+    return 5 + sim * 16;
   }, []);
 
   const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -85,21 +85,25 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     const color = nodeColor(node);
     const x = node.x ?? 0;
     const y = node.y ?? 0;
-
     const riskLevel = typeof node.risk_level === "number" ? node.risk_level : 0;
 
-    // Glow for center node
+    // Outer glow for center node
     if (node.type === "post") {
       ctx.beginPath();
-      ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
-      ctx.fillStyle = "rgba(255, 34, 34, 0.15)";
+      ctx.arc(x, y, size + 6, 0, 2 * Math.PI);
+      ctx.fillStyle = "rgba(255, 34, 34, 0.12)";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, y, size + 3, 0, 2 * Math.PI);
+      ctx.fillStyle = "rgba(255, 34, 34, 0.2)";
       ctx.fill();
     }
+
     // Glow for high-risk landmarks
     if (riskLevel >= 0.8 && node.type === "metadata") {
       ctx.beginPath();
       ctx.arc(x, y, size + 5, 0, 2 * Math.PI);
-      ctx.fillStyle = `rgba(244, 63, 94, ${riskLevel * 0.15})`;
+      ctx.fillStyle = `rgba(244, 63, 94, ${riskLevel * 0.12})`;
       ctx.fill();
     }
 
@@ -110,17 +114,44 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     ctx.fill();
 
     // Border
-    ctx.strokeStyle = node.type === "post" ? "#ff6666" : "rgba(255,255,255,0.1)";
-    ctx.lineWidth = node.type === "post" ? 2 : 0.5;
+    if (node.type === "post") {
+      ctx.strokeStyle = "#ff6666";
+      ctx.lineWidth = 2;
+    } else if (node.type === "metadata") {
+      ctx.strokeStyle = "rgba(244,63,94,0.4)";
+      ctx.lineWidth = 1.5;
+    } else {
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 0.5;
+    }
     ctx.stroke();
 
-    // Label
-    const label = node.label || node.id;
-    const fontSize = Math.max(10 / globalScale, 2.5);
-    ctx.font = `${fontSize}px sans-serif`;
+    // Label -- truncate long labels
+    let label = node.label || node.id;
+    if (label.length > 28) label = label.slice(0, 26) + "...";
+
+    const fontSize = Math.max(11 / globalScale, 3);
+    ctx.font = `600 ${fontSize}px 'SF Mono', monospace`;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillStyle = node.type === "post" ? "#ff8888" : "#777";
+
+    // Label background for readability
+    if (globalScale > 0.6) {
+      const metrics = ctx.measureText(label);
+      const pad = 2 / globalScale;
+      ctx.fillStyle = "rgba(8, 9, 10, 0.75)";
+      ctx.fillRect(
+        x - metrics.width / 2 - pad,
+        y + size + 1,
+        metrics.width + pad * 2,
+        fontSize + pad,
+      );
+    }
+
+    ctx.fillStyle = node.type === "post" ? "#ff8888"
+      : node.type === "metadata" ? "#f4a0b0"
+      : node.type === "extraction" ? "#7dd3e8"
+      : "#888";
     ctx.fillText(label, x, y + size + 2);
   }, [nodeColor, nodeSize]);
 
@@ -137,40 +168,48 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     ctx.lineTo(tx, ty);
 
     if (isMultiSource) {
-      // OCR + Text = thick glowing cyan line
       ctx.strokeStyle = `rgba(6, 182, 212, ${Math.max(weight * 0.8, 0.4)})`;
       ctx.lineWidth = Math.max(weight * 5, 2.5);
-      ctx.shadowColor = "rgba(6, 182, 212, 0.6)";
-      ctx.shadowBlur = 8;
-    } else if (link.edgeType === "leaks") {
-      ctx.strokeStyle = `rgba(244, 63, 94, ${Math.max(weight * 0.6, 0.15)})`;
-      ctx.lineWidth = Math.max(weight * 3, 0.5);
+      ctx.shadowColor = "rgba(6, 182, 212, 0.5)";
+      ctx.shadowBlur = 6;
+    } else if (link.edgeType === "leaks" || link.edgeType === "confirms") {
+      ctx.strokeStyle = `rgba(244, 63, 94, ${Math.max(weight * 0.5, 0.15)})`;
+      ctx.lineWidth = Math.max(weight * 3, 0.8);
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
-    } else if (link.edgeType === "confirms") {
-      ctx.strokeStyle = `rgba(244, 63, 94, ${Math.max(weight * 0.5, 0.2)})`;
-      ctx.lineWidth = Math.max(weight * 3.5, 0.8);
+    } else if (link.edgeType === "pattern" || link.edgeType === "corridor") {
+      ctx.strokeStyle = `rgba(192, 132, 252, ${Math.max(weight * 0.4, 0.1)})`;
+      ctx.lineWidth = Math.max(weight * 2, 0.5);
+      ctx.setLineDash([4, 3]);
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
     } else {
-      ctx.strokeStyle = `rgba(255, 255, 255, ${Math.max(weight * 0.5, 0.05)})`;
-      ctx.lineWidth = Math.max(weight * 2.5, 0.3);
+      ctx.strokeStyle = `rgba(255, 255, 255, ${Math.max(weight * 0.35, 0.05)})`;
+      ctx.lineWidth = Math.max(weight * 2, 0.3);
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
     }
     ctx.stroke();
-    // Reset shadow
+    ctx.setLineDash([]);
     ctx.shadowColor = "transparent";
     ctx.shadowBlur = 0;
   }, []);
 
   if (nodes.length === 0) return null;
 
+  // Collect unique cluster names for legend
+  const clusterNames = new Map<number, string>();
+  nodes.forEach((n) => {
+    if (n.cluster_id !== undefined && n.cluster_name) {
+      clusterNames.set(n.cluster_id, n.cluster_name);
+    }
+  });
+
   return (
     <div
       ref={containerRef}
       style={{
-        backgroundColor: "#0d0d0d",
+        backgroundColor: "#0a0a0a",
         border: "1px solid #1a1a1a",
         borderRadius: "10px",
         overflow: "hidden",
@@ -181,17 +220,17 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
       <div
         style={{
           padding: "0.75rem 1rem",
-          borderBottom: "1px solid #1a1a1a",
+          borderBottom: "1px solid #141618",
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
         }}
       >
-        <span style={{ color: "#666", fontSize: "0.8rem", fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-          Stalker&apos;s Web
+        <span style={{ color: "#555", fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+          Stalker&apos;s Web — Identity Link Graph
         </span>
-        <span style={{ color: "#444", fontSize: "0.7rem" }}>
-          {nodes.length} nodes &middot; {edges.length} connections
+        <span style={{ color: "#333", fontSize: "0.65rem" }}>
+          {nodes.length} nodes · {edges.length} connections
         </span>
       </div>
 
@@ -200,7 +239,7 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
         graphData={graphData}
         width={dimensions.width}
         height={dimensions.height}
-        backgroundColor="#0d0d0d"
+        backgroundColor="#0a0a0a"
         nodeCanvasObject={paintNode}
         linkCanvasObject={paintLink}
         nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
@@ -210,34 +249,47 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
           ctx.fillStyle = color;
           ctx.fill();
         }}
-        cooldownTicks={80}
-        d3AlphaDecay={0.03}
-        d3VelocityDecay={0.3}
+        cooldownTicks={120}
+        d3AlphaDecay={0.02}
+        d3VelocityDecay={0.25}
         enableZoomInteraction={true}
         enablePanInteraction={true}
+        warmupTicks={30}
       />
 
       {/* Legend */}
       <div
         style={{
-          padding: "0.5rem 1rem",
-          borderTop: "1px solid #1a1a1a",
+          padding: "0.6rem 1rem",
+          borderTop: "1px solid #141618",
           display: "flex",
           gap: "1rem",
           flexWrap: "wrap",
+          alignItems: "center",
         }}
       >
         {[
-          { color: "#ff2222", label: "Your Post" },
-          { color: "#06b6d4", label: "OCR Text" },
-          { color: "#f43f5e", label: "EXIF Leak" },
-          { color: "#444", label: "History" },
+          { color: "#ff2222", label: "Draft Post" },
+          { color: "#06b6d4", label: "Extracted Entity" },
+          { color: "#f43f5e", label: "Landmark / OCR" },
         ].map((item) => (
           <div key={item.label} style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
             <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: item.color }} />
-            <span style={{ color: "#555", fontSize: "0.7rem" }}>{item.label}</span>
+            <span style={{ color: "#444", fontSize: "0.65rem" }}>{item.label}</span>
           </div>
         ))}
+        {/* Cluster legend */}
+        {clusterNames.size > 0 && (
+          <>
+            <div style={{ width: 1, height: 12, backgroundColor: "#1a1a1a", margin: "0 0.25rem" }} />
+            {Array.from(clusterNames.entries()).map(([cid, name]) => (
+              <div key={cid} style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: CLUSTER_COLORS[cid % CLUSTER_COLORS.length] }} />
+                <span style={{ color: "#444", fontSize: "0.65rem" }}>{name}</span>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
