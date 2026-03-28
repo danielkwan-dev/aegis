@@ -3,7 +3,8 @@
 interface ThreatBannerProps {
   riskLevel: string;
   maxSimilarity: number;
-  categoryScores: Record<string, number>;
+  breachProbability: number;
+  entityScores: Record<string, number>;
 }
 
 const RISK_CONFIG: Record<string, { bg: string; border: string; text: string; glow: string }> = {
@@ -13,14 +14,15 @@ const RISK_CONFIG: Record<string, { bg: string; border: string; text: string; gl
   LOW:      { bg: "#0a1a0a", border: "#16a34a", text: "#4ade80", glow: "none" },
 };
 
-const CATEGORY_LABELS: Record<string, string> = {
-  daily_routine: "Daily Routine",
-  home_location: "Home Location",
-  work_location: "Work Location",
-  family_location: "Family Location",
+const ENTITY_LABELS: Record<string, string> = {
+  daily_route: "Daily Route",
+  home: "Home",
+  work: "Work",
+  family: "Family",
+  general: "General",
 };
 
-export default function ThreatBanner({ riskLevel, maxSimilarity, categoryScores }: ThreatBannerProps) {
+export default function ThreatBanner({ riskLevel, maxSimilarity, breachProbability, entityScores }: ThreatBannerProps) {
   const config = RISK_CONFIG[riskLevel] ?? RISK_CONFIG.LOW;
 
   return (
@@ -57,14 +59,37 @@ export default function ThreatBanner({ riskLevel, maxSimilarity, categoryScores 
         </span>
       </div>
 
-      {/* Category breakdown */}
+      {/* Breach probability bar */}
+      <div style={{ marginBottom: "0.75rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" }}>
+          <span style={{ color: "#999", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Breach Probability
+          </span>
+          <span style={{ color: config.text, fontSize: "1rem", fontWeight: 700, fontFamily: "monospace" }}>
+            {breachProbability.toFixed(1)}%
+          </span>
+        </div>
+        <div style={{ width: "100%", height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3 }}>
+          <div
+            style={{
+              width: `${Math.min(breachProbability, 100)}%`,
+              height: "100%",
+              backgroundColor: config.text,
+              borderRadius: 3,
+              transition: "width 0.5s ease",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Sensitive entity breakdown */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-        {Object.entries(categoryScores)
+        {Object.entries(entityScores)
           .filter(([, score]) => score > 0)
           .sort(([, a], [, b]) => b - a)
-          .map(([cat, score]) => (
+          .map(([entity, score]) => (
             <span
-              key={cat}
+              key={entity}
               style={{
                 padding: "0.25rem 0.6rem",
                 backgroundColor: "rgba(255,255,255,0.05)",
@@ -75,16 +100,16 @@ export default function ThreatBanner({ riskLevel, maxSimilarity, categoryScores 
                 fontFamily: "monospace",
               }}
             >
-              {CATEGORY_LABELS[cat] ?? cat}: {(score * 100).toFixed(0)}%
+              {ENTITY_LABELS[entity] ?? entity}: {(score * 100).toFixed(0)}%
             </span>
           ))}
       </div>
 
-      {/* Warning text for critical/high */}
+      {/* Warning text */}
       {(riskLevel === "CRITICAL" || riskLevel === "HIGH") && (
         <p style={{ color: "#999", fontSize: "0.8rem", margin: "0.75rem 0 0", lineHeight: 1.4 }}>
-          This post correlates with your historical patterns. A motivated stalker could
-          use this to predict your location or routine.
+          Identity Links detected. This post, combined with your existing digital footprint,
+          could reveal sensitive entities to a motivated adversary.
         </p>
       )}
     </div>

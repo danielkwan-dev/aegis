@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from engine import analyze_threat
+from engine import analyze_threat, ingest_data_point, security_baseline
 
 load_dotenv()
 
@@ -13,7 +13,7 @@ HEX_API_TOKEN = os.getenv("HEX_API_TOKEN", "")
 HEX_PROJECT_ID = os.getenv("HEX_PROJECT_ID", "")
 HEX_API_URL = f"https://app.hex.tech/api/v1/projects/{HEX_PROJECT_ID}/runs"
 
-app = FastAPI(title="Aegis API")
+app = FastAPI(title="Aegis — Personal Security Audit")
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,11 +60,49 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/api/simulate")
-async def simulate(
+@app.get("/api/exposure-map")
+def get_exposure_map():
+    """Return current exposure map stats and all baseline entries."""
+    return {
+        "exposure_map": security_baseline.exposure_map_stats(),
+        "entries": security_baseline.entries,
+    }
+
+
+@app.delete("/api/exposure-map")
+def clear_exposure_map():
+    """Clear all baseline data (reset for demo)."""
+    security_baseline.clear()
+    return {"status": "cleared", "exposure_map": security_baseline.exposure_map_stats()}
+
+
+@app.post("/api/audit-ingest")
+async def audit_ingest(
+    text: str = Form(""),
+    label: str = Form(""),
+    category: str = Form(""),
+    image: UploadFile | None = File(None),
+):
+    """Ingest a data point into the security baseline."""
+    image_bytes = None
+    if image and image.filename:
+        image_bytes = await image.read()
+
+    result = ingest_data_point(
+        text=text,
+        image_bytes=image_bytes,
+        label=label if label else None,
+        category=category if category else None,
+    )
+    return result
+
+
+@app.post("/api/analyze-threat")
+async def analyze(
     text: str = Form(""),
     image: UploadFile | None = File(None),
 ):
+    """Analyze a draft post for Identity Links against the security baseline."""
     image_bytes = None
     if image and image.filename:
         image_bytes = await image.read()

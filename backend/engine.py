@@ -1,19 +1,19 @@
 """
-Aegis Threat Engine
-───────────────────
+Aegis — Personal Security Audit Engine
+───────────────────────────────────────
 1. OCR extraction  (pytesseract)
 2. EXIF metadata   (Pillow)
 3. Data merge      (draft + OCR + metadata → single string)
-4. Stalker baseline (mock digital history)
-5. TF-IDF + clustering threat analysis
-6. Stalker's Web output (nodes + edges)
+4. Security baseline (in-memory exposure map)
+5. TF-IDF clustering + Identity Link detection
+6. Exposure Map output (nodes + edges)
 """
 
 from __future__ import annotations
 
 import io
-import json
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
 import pytesseract
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -117,116 +117,148 @@ def merge_signals(draft_text: str, ocr_text: str, metadata_text: str) -> str:
 
 
 # ──────────────────────────────────────────────
-# 4. Stalker baseline — mock digital history
+# 4. Security baseline (in-memory exposure map)
 # ──────────────────────────────────────────────
 
-MOCK_HISTORY = [
-    {
-        "id": "hist_1",
-        "label": "Morning coffee routine",
-        "text": "Getting my usual oat latte at Blue Bottle on 4th and Market every weekday at 7:30am",
-        "category": "daily_routine",
-    },
-    {
-        "id": "hist_2",
-        "label": "Home neighborhood",
-        "text": "Love my apartment in the Sunset District, GPS location 37.7527, -122.4947. Beautiful fog every morning from my window on 25th Ave",
-        "category": "home_location",
-    },
-    {
-        "id": "hist_3",
-        "label": "Gym schedule",
-        "text": "Hitting the gym at 24 Hour Fitness on Divisadero every Monday Wednesday Friday at 6pm after work",
-        "category": "daily_routine",
-    },
-    {
-        "id": "hist_4",
-        "label": "Workplace",
-        "text": "Another day at the office on 5th floor 101 California Street financial district. My desk is by the east window",
-        "category": "work_location",
-    },
-    {
-        "id": "hist_5",
-        "label": "Weekend pattern",
-        "text": "Every Saturday morning farmers market at Ferry Building then walk along Embarcadero with the dog",
-        "category": "daily_routine",
-    },
-    {
-        "id": "hist_6",
-        "label": "Commute route",
-        "text": "Taking the N-Judah from Sunset to downtown every morning, board at 19th Ave station at 8:15am sharp",
-        "category": "daily_routine",
-    },
-    {
-        "id": "hist_7",
-        "label": "Kids school",
-        "text": "Dropping kids off at Lincoln Elementary on Quintara Street at 8am then heading to work",
-        "category": "family_location",
-    },
-    {
-        "id": "hist_8",
-        "label": "Favorite restaurant",
-        "text": "Friday date night at Nopalito on 9th Ave, always get the table near the back patio around 7pm",
-        "category": "daily_routine",
-    },
-]
+# Sensitive entity categories
+ENTITY_KEYWORDS = {
+    "home": ["home", "apartment", "house", "live", "moved", "neighbor", "street", "ave", "block", "rent"],
+    "work": ["office", "work", "job", "desk", "coworker", "meeting", "company", "building", "commute"],
+    "daily_route": ["every", "always", "morning", "evening", "daily", "routine", "usual", "regular", "weekday", "gym", "coffee"],
+    "family": ["kid", "child", "school", "daycare", "son", "daughter", "family", "parent", "pickup"],
+}
 
 
-def load_stalker_baseline() -> list[dict]:
-    """Load the mock digital history representing a user's past posts.
-    In production this would pull from a real user history store."""
-    return MOCK_HISTORY
+def classify_sensitive_entity(text: str) -> str:
+    """Classify text into a sensitive entity type using keyword matching."""
+    text_lower = text.lower()
+    scores: dict[str, int] = {}
+    for entity, keywords in ENTITY_KEYWORDS.items():
+        scores[entity] = sum(1 for kw in keywords if kw in text_lower)
+    best = max(scores, key=scores.get)  # type: ignore
+    return best if scores[best] > 0 else "general"
+
+
+class SecurityBaseline:
+    """In-memory exposure map — the user's known digital footprint."""
+
+    def __init__(self) -> None:
+        self._entries: list[dict] = []
+
+    @property
+    def entries(self) -> list[dict]:
+        return list(self._entries)
+
+    @property
+    def count(self) -> int:
+        return len(self._entries)
+
+    def ingest(
+        self,
+        text: str,
+        label: str | None = None,
+        category: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
+        """Ingest a data point into the security baseline. Returns the entry."""
+        entry_id = f"bp_{uuid.uuid4().hex[:8]}"
+        entity_type = category or classify_sensitive_entity(text)
+        has_gps = bool(metadata and "gps_lat" in metadata)
+
+        entry = {
+            "id": entry_id,
+            "label": label or self._generate_label(text),
+            "text": text,
+            "entity_type": entity_type,
+            "has_gps": has_gps,
+            "metadata": metadata or {},
+            "ingested_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._entries.append(entry)
+        return entry
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+    def exposure_map_stats(self) -> dict:
+        """Return summary of the current exposure map."""
+        entities: dict[str, int] = {}
+        known_locations = 0
+        for e in self._entries:
+            entities[e["entity_type"]] = entities.get(e["entity_type"], 0) + 1
+            if e["has_gps"]:
+                known_locations += 1
+
+        return {
+            "total_data_points": self.count,
+            "sensitive_entities": entities,
+            "known_locations": known_locations,
+        }
+
+    @staticmethod
+    def _generate_label(text: str) -> str:
+        words = text.split()
+        preview = " ".join(words[:6])
+        if len(words) > 6:
+            preview += "..."
+        return preview
+
+
+# Global instance
+security_baseline = SecurityBaseline()
 
 
 # ──────────────────────────────────────────────
-# 5. TF-IDF clustering + threat scoring
+# 5. TF-IDF clustering + Identity Link detection
 # ──────────────────────────────────────────────
 
-def compute_threat_analysis(merged_text: str, history: list[dict]) -> dict:
+def detect_identity_links(merged_text: str, baseline: list[dict]) -> dict:
     """
-    Vectorize the merged text against the user's history using TF-IDF.
-    Compute cosine similarity to find which historical clusters the new
-    post is dangerously close to. Return threat scores per category.
+    Vectorize the new post against the security baseline using TF-IDF.
+    Detect Identity Links — connections between the new post and baseline
+    entries that, when combined, reveal a Sensitive Entity.
+    Returns threat scores, identity links, and breach probability.
     """
-    history_texts = [entry["text"] for entry in history]
-    all_texts = history_texts + [merged_text]
+    baseline_texts = [entry["text"] for entry in baseline]
+    all_texts = baseline_texts + [merged_text]
 
     vectorizer = TfidfVectorizer(stop_words="english")
     tfidf_matrix = vectorizer.fit_transform(all_texts)
 
-    # The new post is the last vector
     new_post_vec = tfidf_matrix[-1]
-    history_vecs = tfidf_matrix[:-1]
+    baseline_vecs = tfidf_matrix[:-1]
 
-    # Cosine similarity between new post and each history entry
-    similarities = cosine_similarity(new_post_vec, history_vecs).flatten()
+    similarities = cosine_similarity(new_post_vec, baseline_vecs).flatten()
 
-    # Build per-entry scores
-    scored_entries = []
-    for i, entry in enumerate(history):
-        scored_entries.append({
-            **entry,
-            "similarity": round(float(similarities[i]), 4),
-        })
+    # Build identity links (scored connections to baseline entries)
+    identity_links = []
+    for i, entry in enumerate(baseline):
+        sim = float(similarities[i])
+        if sim > 0.01:
+            identity_links.append({
+                **entry,
+                "similarity": round(sim, 4),
+                "link_type": "identity_link",
+            })
 
-    # Sort by most dangerous match
-    scored_entries.sort(key=lambda x: x["similarity"], reverse=True)
+    identity_links.sort(key=lambda x: x["similarity"], reverse=True)
 
-    # Aggregate threat by category
-    category_threats: dict[str, list[float]] = {}
-    for entry in scored_entries:
-        cat = entry["category"]
-        if cat not in category_threats:
-            category_threats[cat] = []
-        category_threats[cat].append(entry["similarity"])
+    # Aggregate by sensitive entity type
+    entity_threats: dict[str, list[float]] = {}
+    for link in identity_links:
+        etype = link["entity_type"]
+        if etype not in entity_threats:
+            entity_threats[etype] = []
+        entity_threats[etype].append(link["similarity"])
 
-    category_scores = {}
-    for cat, scores in category_threats.items():
-        category_scores[cat] = round(float(np.max(scores)), 4)
+    entity_scores = {}
+    for etype, scores in entity_threats.items():
+        entity_scores[etype] = round(float(np.max(scores)), 4)
 
-    # Overall risk level
+    # Max similarity
     max_sim = float(similarities.max()) if len(similarities) > 0 else 0.0
 
+    # Risk level
     if max_sim >= 0.4:
         risk_level = "CRITICAL"
     elif max_sim >= 0.2:
@@ -236,41 +268,56 @@ def compute_threat_analysis(merged_text: str, history: list[dict]) -> dict:
     else:
         risk_level = "LOW"
 
+    # Breach probability (0–100%)
+    # Factors: max similarity, number of entity types exposed, number of links
+    num_entities_exposed = len(entity_scores)
+    num_links = len(identity_links)
+    total_baseline = len(baseline)
+
+    # Base from similarity (0–50%)
+    base_prob = min(max_sim * 125, 50.0)
+    # Entity diversity bonus (0–25%): more entity types exposed = worse
+    entity_bonus = min(num_entities_exposed * 6.25, 25.0)
+    # Coverage bonus (0–25%): what fraction of baseline is linked
+    coverage = (num_links / total_baseline) if total_baseline > 0 else 0
+    coverage_bonus = min(coverage * 25.0, 25.0)
+
+    breach_probability = round(min(base_prob + entity_bonus + coverage_bonus, 100.0), 1)
+
     return {
         "risk_level": risk_level,
         "max_similarity": round(max_sim, 4),
-        "category_scores": category_scores,
-        "matched_entries": scored_entries,
+        "entity_scores": entity_scores,
+        "identity_links": identity_links,
+        "breach_probability": breach_probability,
     }
 
 
 # ──────────────────────────────────────────────
-# 6. Stalker's Web — nodes + edges output
+# 6. Exposure Map — nodes + edges output
 # ──────────────────────────────────────────────
 
-CATEGORY_COLORS = {
-    "daily_routine": "#f59e0b",
-    "home_location": "#ef4444",
-    "work_location": "#3b82f6",
-    "family_location": "#a855f7",
+ENTITY_COLORS = {
+    "daily_route": "#f59e0b",
+    "home": "#ef4444",
+    "work": "#3b82f6",
+    "family": "#a855f7",
+    "general": "#6b7280",
 }
 
 
-def build_stalker_web(
-    merged_text: str,
+def build_exposure_map(
     threat_analysis: dict,
     ocr_text: str,
     metadata: dict,
 ) -> dict:
     """
-    Build a graph payload (nodes + edges) representing the Stalker's Web.
-    The new post is the center node. History entries are surrounding nodes.
-    Edge weight = similarity score.
+    Build the Exposure Map graph (nodes + edges).
+    Center = new post. Surrounding = identity-linked baseline entries.
     """
     nodes = []
     edges = []
 
-    # Center node: the new post
     nodes.append({
         "id": "new_post",
         "label": "Your Draft Post",
@@ -279,7 +326,6 @@ def build_stalker_web(
         "color": "#ef4444" if threat_analysis["risk_level"] in ("CRITICAL", "HIGH") else "#f59e0b",
     })
 
-    # OCR node (if text was extracted)
     if ocr_text:
         nodes.append({
             "id": "ocr_extract",
@@ -295,7 +341,6 @@ def build_stalker_web(
             "weight": 1.0,
         })
 
-    # Metadata node (if EXIF found)
     if metadata:
         meta_label = []
         if "gps_lat" in metadata:
@@ -317,40 +362,33 @@ def build_stalker_web(
             "weight": 1.0,
         })
 
-    # History nodes + edges
-    SIMILARITY_THRESHOLD = 0.02  # include anything remotely related
-    for entry in threat_analysis["matched_entries"]:
-        if entry["similarity"] < SIMILARITY_THRESHOLD:
-            continue
-
-        cat = entry["category"]
+    for link in threat_analysis["identity_links"]:
+        etype = link["entity_type"]
         nodes.append({
-            "id": entry["id"],
-            "label": entry["label"],
-            "type": "history",
-            "category": cat,
-            "similarity": entry["similarity"],
-            "color": CATEGORY_COLORS.get(cat, "#6b7280"),
+            "id": link["id"],
+            "label": link["label"],
+            "type": "baseline",
+            "entity_type": etype,
+            "similarity": link["similarity"],
+            "color": ENTITY_COLORS.get(etype, "#6b7280"),
         })
         edges.append({
             "source": "new_post",
-            "target": entry["id"],
-            "type": "correlates",
-            "weight": entry["similarity"],
-            "category": cat,
+            "target": link["id"],
+            "type": "identity_link",
+            "weight": link["similarity"],
+            "entity_type": etype,
         })
 
     return {"nodes": nodes, "edges": edges}
 
 
 # ──────────────────────────────────────────────
-# Main entry point
+# Public API — called by main.py
 # ──────────────────────────────────────────────
 
-def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
-    """Full Aegis analysis pipeline. Called by the /api/simulate endpoint."""
-
-    # 1 & 2. Extract from image
+def ingest_data_point(text: str, image_bytes: bytes | None, label: str | None = None, category: str | None = None) -> dict:
+    """Ingest a data point into the security baseline (exposure map)."""
     ocr_text = ""
     metadata: dict = {}
     if image_bytes:
@@ -358,8 +396,36 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
         metadata = extract_exif_metadata(image_bytes)
 
     metadata_text = metadata_to_text(metadata)
+    merged = merge_signals(text, ocr_text, metadata_text)
 
-    # 3. Merge all signals
+    if not merged.strip():
+        return {"status": "empty", "message": "No data to ingest."}
+
+    entry = security_baseline.ingest(
+        text=merged,
+        label=label,
+        category=category,
+        metadata=metadata if metadata else None,
+    )
+
+    return {
+        "status": "secured",
+        "message": "Data Point Secured",
+        "entry": entry,
+        "exposure_map": security_baseline.exposure_map_stats(),
+    }
+
+
+def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
+    """Full Aegis threat analysis. Detects Identity Links against the security baseline."""
+
+    ocr_text = ""
+    metadata: dict = {}
+    if image_bytes:
+        ocr_text = extract_ocr_text(image_bytes)
+        metadata = extract_exif_metadata(image_bytes)
+
+    metadata_text = metadata_to_text(metadata)
     merged = merge_signals(draft_text, ocr_text, metadata_text)
 
     if not merged.strip():
@@ -367,20 +433,45 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
             "status": "empty",
             "message": "No text or image data to analyze.",
             "web": {"nodes": [], "edges": []},
+            "exposure_map": security_baseline.exposure_map_stats(),
         }
 
-    # 4. Load history & run clustering
-    history = load_stalker_baseline()
-    threat = compute_threat_analysis(merged, history)
+    # Check baseline state
+    baseline = security_baseline.entries
+    if len(baseline) == 0:
+        return {
+            "status": "initializing",
+            "risk_level": "INITIALIZING",
+            "max_similarity": 0.0,
+            "breach_probability": 0.0,
+            "entity_scores": {},
+            "message": "No baseline data yet. Use /audit-ingest to build your exposure map first.",
+            "signals": {
+                "draft_text_length": len(draft_text),
+                "ocr_text": ocr_text if ocr_text else None,
+                "exif_metadata": metadata if metadata else None,
+                "merged_length": len(merged),
+            },
+            "web": {"nodes": [{
+                "id": "new_post",
+                "label": "Your Draft Post",
+                "type": "post",
+                "risk_level": "INITIALIZING",
+                "color": "#666",
+            }], "edges": []},
+            "exposure_map": security_baseline.exposure_map_stats(),
+        }
 
-    # 5. Build stalker web
-    web = build_stalker_web(merged, threat, ocr_text, metadata)
+    # Detect identity links
+    threat = detect_identity_links(merged, baseline)
+    web = build_exposure_map(threat, ocr_text, metadata)
 
     return {
         "status": "analyzed",
         "risk_level": threat["risk_level"],
         "max_similarity": threat["max_similarity"],
-        "category_scores": threat["category_scores"],
+        "breach_probability": threat["breach_probability"],
+        "entity_scores": threat["entity_scores"],
         "signals": {
             "draft_text_length": len(draft_text),
             "ocr_text": ocr_text if ocr_text else None,
@@ -388,4 +479,5 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
             "merged_length": len(merged),
         },
         "web": web,
+        "exposure_map": security_baseline.exposure_map_stats(),
     }
