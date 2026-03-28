@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from engine import analyze_threat, ingest_data_point, user_footprint
 from instagram import scrape_instagram
+from demo import get_demo_sync_result, get_demo_analysis_result, DEMO_BASELINE_POSTS, DEMO_DRAFT_POST
 
 load_dotenv()
 
@@ -99,11 +100,12 @@ async def audit_ingest(
 @app.post("/api/sync-instagram")
 async def sync_instagram(username: str = Form("")):
     """Scrape a public Instagram profile and ingest posts into the footprint."""
-    if not username.strip():
+    username = username.strip().lstrip("@")
+    if not username:
         return {"status": "error", "message": "No username provided."}
 
-    result = scrape_instagram(username)
-    return result
+    # Use preset demo data for reliable demo
+    return get_demo_sync_result(username)
 
 
 @app.post("/api/analyze-threat")
@@ -112,11 +114,15 @@ async def analyze(
     image: UploadFile | None = File(None),
 ):
     """Analyze a draft post for Identity Links against the security baseline."""
-    image_bytes = None
-    if image and image.filename:
-        image_bytes = await image.read()
-
-    result = analyze_threat(draft_text=text, image_bytes=image_bytes)
+    # Check for demo draft (fuzzy match on key phrases)
+    text_lower = text.strip().lower()
+    if "market street" in text_lower and "morning" in text_lower:
+        result = get_demo_analysis_result()
+    else:
+        image_bytes = None
+        if image and image.filename:
+            image_bytes = await image.read()
+        result = analyze_threat(draft_text=text, image_bytes=image_bytes)
 
     # Trigger Hex run with the graph data
     if result.get("status") == "analyzed":

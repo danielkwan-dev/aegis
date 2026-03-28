@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+/* ── Aegis Cyber-Noir Theme ─────────────────── */
+
+@theme {
+  --color-noir-bg: #08090a;
+  --color-noir-card: #0d1117;
+  --color-noir-border: #141618;
+  --color-noir-border-light: #1e2228;
+  --color-sec-red: #dc2626;
+  --color-sec-red-light: #ff4444;
+  --color-hex-cyan: #06b6d4;
+  --color-aegis-green: #16a34a;
+  --color-warn-amber: #f59e0b;
+  --color-text-primary: #c8ccd0;
+  --color-text-muted: #555;
+  --color-text-dim: #333;
+}
+
+/* ── Keyframes ──────────────────────────────── */
+
+@keyframes gaugeAnimate {
+  from { stroke-dashoffset: 314; }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 8px rgba(220,38,38,0.3); }
+  50% { box-shadow: 0 0 20px rgba(220,38,38,0.6); }
+}
+
+@keyframes alarmPulse {
+  0%, 100% {
+    border-color: rgba(220,38,38,0.15);
+    box-shadow: inset 0 0 30px rgba(220,38,38,0.03), 0 0 15px rgba(220,38,38,0.05);
+  }
+  50% {
+    border-color: rgba(220,38,38,0.35);
+    box-shadow: inset 0 0 60px rgba(220,38,38,0.06), 0 0 30px rgba(220,38,38,0.12);
+  }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+/* ── Global styles ─────────────────────────── */
+
+* { box-sizing: border-box; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-noir-bg); }
+::-webkit-scrollbar-thumb { background: #222; border-radius: 3px; }
+
+body {
+  margin: 0;
+  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+  background-color: var(--color-noir-bg);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+}

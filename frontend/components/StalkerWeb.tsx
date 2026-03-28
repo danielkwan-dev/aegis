@@ -11,7 +11,8 @@ interface WebNode {
   label: string;
   type: string;
   color: string;
-  risk_level?: string;
+  risk_level?: number | string;
+  weight?: number;
   category?: string;
   similarity?: number;
   text_preview?: string;
@@ -24,6 +25,7 @@ interface WebEdge {
   type: string;
   weight: number;
   category?: string;
+  connection_strength?: string;
 }
 
 interface StalkerWebProps {
@@ -52,6 +54,7 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
       edgeType: e.type,
       weight: e.weight,
       category: e.category,
+      connectionStrength: e.connection_strength,
     })),
   };
 
@@ -67,11 +70,14 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
   }, []);
 
   const nodeSize = useCallback((node: any) => {
-    if (node.type === "post") return 12;
-    if (node.type === "extraction" || node.type === "metadata") return 8;
-    // Scale history nodes by similarity
-    const sim = node.similarity ?? 0;
-    return 4 + sim * 20;
+    // Use weight field for sizing if available (0-1 scale)
+    const w = node.weight ?? 0;
+    if (node.type === "post") return 14;
+    if (node.type === "metadata") return 6 + w * 14; // landmarks scale big
+    if (node.type === "extraction") return 6 + w * 10;
+    // History nodes scale by similarity or weight
+    const sim = node.similarity ?? w;
+    return 4 + sim * 18;
   }, []);
 
   const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -80,11 +86,20 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     const x = node.x ?? 0;
     const y = node.y ?? 0;
 
+    const riskLevel = typeof node.risk_level === "number" ? node.risk_level : 0;
+
     // Glow for center node
     if (node.type === "post") {
       ctx.beginPath();
       ctx.arc(x, y, size + 4, 0, 2 * Math.PI);
       ctx.fillStyle = "rgba(255, 34, 34, 0.15)";
+      ctx.fill();
+    }
+    // Glow for high-risk landmarks
+    if (riskLevel >= 0.8 && node.type === "metadata") {
+      ctx.beginPath();
+      ctx.arc(x, y, size + 5, 0, 2 * Math.PI);
+      ctx.fillStyle = `rgba(244, 63, 94, ${riskLevel * 0.15})`;
       ctx.fill();
     }
 
@@ -115,18 +130,38 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     const tx = link.target?.x ?? 0;
     const ty = link.target?.y ?? 0;
     const weight = link.weight ?? 0.1;
+    const isMultiSource = link.connectionStrength === "ocr+text";
 
     ctx.beginPath();
     ctx.moveTo(sx, sy);
     ctx.lineTo(tx, ty);
 
-    if (link.edgeType === "leaks") {
+    if (isMultiSource) {
+      // OCR + Text = thick glowing cyan line
+      ctx.strokeStyle = `rgba(6, 182, 212, ${Math.max(weight * 0.8, 0.4)})`;
+      ctx.lineWidth = Math.max(weight * 5, 2.5);
+      ctx.shadowColor = "rgba(6, 182, 212, 0.6)";
+      ctx.shadowBlur = 8;
+    } else if (link.edgeType === "leaks") {
       ctx.strokeStyle = `rgba(244, 63, 94, ${Math.max(weight * 0.6, 0.15)})`;
+      ctx.lineWidth = Math.max(weight * 3, 0.5);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+    } else if (link.edgeType === "confirms") {
+      ctx.strokeStyle = `rgba(244, 63, 94, ${Math.max(weight * 0.5, 0.2)})`;
+      ctx.lineWidth = Math.max(weight * 3.5, 0.8);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
     } else {
       ctx.strokeStyle = `rgba(255, 255, 255, ${Math.max(weight * 0.5, 0.05)})`;
+      ctx.lineWidth = Math.max(weight * 2.5, 0.3);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
     }
-    ctx.lineWidth = Math.max(weight * 3, 0.3);
     ctx.stroke();
+    // Reset shadow
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
   }, []);
 
   if (nodes.length === 0) return null;

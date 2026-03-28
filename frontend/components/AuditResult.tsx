@@ -1,7 +1,9 @@
 "use client";
 
+import { motion } from "framer-motion";
 import RiskGauge from "./RiskGauge";
 import TypingEffect from "./TypingEffect";
+import DigitalShadow from "./DigitalShadow";
 import VisualizationWrapper from "./VisualizationWrapper";
 
 interface VulnFinding {
@@ -129,6 +131,17 @@ export default function AuditResult({ result }: AuditResultProps) {
           <RiskGauge breachProbability={result.breach_probability} />
         </div>
       </div>
+
+      {/* Digital Shadow Scorecard */}
+      <DigitalShadow
+        breachProbability={result.breach_probability}
+        knownAnchors={result.static_landmarks?.length ?? 0}
+        routineConfidence={
+          result.entity_triplets?.[0]?.confidence
+            ? Math.round(result.entity_triplets[0].confidence * 100)
+            : 0
+        }
+      />
 
       {/* Detected Entities */}
       {allEntities.length > 0 && (
@@ -321,7 +334,10 @@ export default function AuditResult({ result }: AuditResultProps) {
 
       {/* Pattern Detection / Final Conclusion */}
       {result.final_conclusion && (
-        <div
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.3 }}
           style={{
             padding: "1.25rem 1.5rem",
             backgroundColor: "#0a1018",
@@ -332,20 +348,77 @@ export default function AuditResult({ result }: AuditResultProps) {
         >
           <div
             style={{
-              fontSize: "0.65rem",
+              fontSize: "0.6rem",
               fontWeight: 600,
-              letterSpacing: "0.1em",
+              letterSpacing: "0.12em",
               textTransform: "uppercase",
               color: "#06b6d4",
-              marginBottom: "0.75rem",
+              marginBottom: "1rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
             }}
           >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                backgroundColor: "#06b6d4",
+                display: "inline-block",
+                boxShadow: "0 0 6px rgba(6,182,212,0.5)",
+              }}
+            />
             PATTERN DETECTION
           </div>
-          <div style={{ fontSize: "0.85rem", color: "#b0b8c0", lineHeight: 1.6 }}>
-            <TypingEffect text={result.final_conclusion} speed={15} />
+          <div style={{ fontSize: "0.82rem", color: "#b0b8c0", lineHeight: 1.7 }}>
+            {result.final_conclusion.includes("[SIGNAL DETECTED]") ? (
+              // Structured conclusion format
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+                {result.final_conclusion.split("\n\n").map((block, i) => {
+                  const tagMatch = block.match(/^\[([A-Z\s]+)\]:\s*([\s\S]*)/);
+                  if (!tagMatch) return <span key={i}>{block}</span>;
+                  const tag = tagMatch[1];
+                  const body = tagMatch[2];
+                  const tagColors: Record<string, string> = {
+                    "SIGNAL DETECTED": "#dc2626",
+                    "LEAK SOURCE": "#f59e0b",
+                    "FORECAST": "#06b6d4",
+                  };
+                  return (
+                    <div key={i}>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "0.15rem 0.5rem",
+                          backgroundColor: `${tagColors[tag] ?? "#555"}15`,
+                          border: `1px solid ${tagColors[tag] ?? "#555"}30`,
+                          borderRadius: "3px",
+                          fontSize: "0.6rem",
+                          fontWeight: 700,
+                          letterSpacing: "0.08em",
+                          color: tagColors[tag] ?? "#555",
+                          marginBottom: "0.35rem",
+                        }}
+                      >
+                        {tag}
+                      </span>
+                      <div style={{ fontSize: "0.8rem", color: "#999", lineHeight: 1.6 }}>
+                        {i === 2 ? (
+                          <TypingEffect text={body} speed={12} />
+                        ) : (
+                          body
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <TypingEffect text={result.final_conclusion} speed={12} />
+            )}
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* Stalker's Web + Hex */}

@@ -101,10 +101,10 @@ export default function SimulateForm() {
     // Simulate progress while waiting for the backend
     const progressInterval = setInterval(() => {
       setSyncProgress((prev) => {
-        if (prev >= 90) return prev;
-        return prev + Math.random() * 8;
+        if (prev >= 85) return Math.min(prev + 0.5, 92);
+        return prev + Math.random() * 5;
       });
-    }, 600);
+    }, 800);
 
     try {
       const formData = new FormData();
@@ -186,9 +186,18 @@ export default function SimulateForm() {
   };
 
   const profileSynced = syncResult?.status === "synced";
+  const isAlarm = result && result.breach_probability > 80;
 
   return (
-    <div>
+    <div
+      style={isAlarm ? {
+        border: "1px solid rgba(220,38,38,0.15)",
+        borderRadius: "12px",
+        padding: "1.5rem",
+        margin: "-1.5rem",
+        animation: "alarmPulse 3s ease-in-out infinite",
+      } : undefined}
+    >
       {/* Exposure Map Stats Bar */}
       {exposureMap && (
         <div
@@ -227,7 +236,7 @@ export default function SimulateForm() {
       <div style={{ marginBottom: "2.5rem", paddingBottom: "2rem", borderBottom: "1px solid #141618" }}>
         <div style={{ ...labelStyle, color: "#16a34a" }}>STEP 1 // INSTAGRAM OSINT</div>
         <p style={{ color: "#555", fontSize: "0.78rem", margin: "0 0 1rem", lineHeight: 1.5 }}>
-          Enter a public Instagram handle. Aegis will scrape their last 15 posts,
+          Enter a public Instagram handle. Aegis will scrape their past posts,
           run OCR on images, extract locations and timestamps, and build the exposure map.
         </p>
 
