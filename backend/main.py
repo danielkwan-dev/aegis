@@ -29,6 +29,74 @@ app.add_middleware(
 )
 
 
+# Known location coordinates for geographic mapping
+# Covers common SF landmarks. For a production app you'd use a geocoding API.
+LOCATION_COORDS: dict[str, tuple[float, float]] = {
+    "market street": (37.7891, -122.4009),
+    "market st": (37.7891, -122.4009),
+    "broadway": (37.7979, -122.4058),
+    "financial district": (37.7946, -122.3999),
+    "starbucks": (37.7903, -122.4009),
+    "embarcadero": (37.7936, -122.3930),
+    "mission street": (37.7873, -122.3965),
+    "lombard street": (37.8021, -122.4187),
+    "main street": (37.7914, -122.3950),
+    "king street": (37.7764, -122.3929),
+}
+
+
+def _build_geo_markers(analysis_result: dict) -> list[dict]:
+    """Build geographic markers from analysis data for Hex map."""
+    markers = []
+    seen_coords: set[tuple[float, float]] = set()
+
+    # From static landmarks
+    for lm in analysis_result.get("static_landmarks", []):
+        if lm.get("type") == "street":
+            name = lm["value"].lower()
+            if name in LOCATION_COORDS:
+                lat, lon = LOCATION_COORDS[name]
+                markers.append({
+                    "lat": lat, "lon": lon,
+                    "name": lm["value"].title(),
+                    "type": "landmark",
+                    "risk": lm.get("percentage", 0) / 100.0,
+                    "detail": f"Appears in {lm.get('percentage', 0)}% of posts. {lm.get('classification', '')}",
+                })
+                seen_coords.add((lat, lon))
+
+    # From vulnerability map
+    for vuln in analysis_result.get("vulnerability_map", []):
+        finding = vuln.get("finding", "").lower()
+        for loc_name, (lat, lon) in LOCATION_COORDS.items():
+            if loc_name in finding and (lat, lon) not in seen_coords:
+                markers.append({
+                    "lat": lat, "lon": lon,
+                    "name": loc_name.title(),
+                    "type": "vulnerability",
+                    "risk": 0.9 if vuln["severity"] == "critical" else 0.6,
+                    "detail": vuln["finding"][:120],
+                })
+                seen_coords.add((lat, lon))
+
+    # From entity triplets
+    for triplet in analysis_result.get("entity_triplets", []):
+        loc = triplet.get("location", "").lower()
+        if loc in LOCATION_COORDS:
+            lat, lon = LOCATION_COORDS[loc]
+            if (lat, lon) not in seen_coords:
+                markers.append({
+                    "lat": lat, "lon": lon,
+                    "name": triplet["location"],
+                    "type": "routine",
+                    "risk": triplet.get("confidence", 0.5),
+                    "detail": f"{triplet.get('time', '')} — {triplet.get('activity', '')}",
+                })
+                seen_coords.add((lat, lon))
+
+    return markers
+
+
 async def trigger_hex_run(analysis_result: dict) -> dict | None:
     """POST analysis data to Hex and return run metadata."""
     if not HEX_API_TOKEN or not HEX_PROJECT_ID:
@@ -39,9 +107,8 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
         "Content-Type": "application/json",
     }
 
-    # Build inputParams — only include params that exist in the Hex project.
-    # If you haven't created input params in Hex yet, send empty dict to
-    # trigger a run with defaults. Add params in the Hex UI, then uncomment.
+    geo_markers = _build_geo_markers(analysis_result)
+
     input_params = {}
     try:
         input_params = {
@@ -53,6 +120,9 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
                 "clustering": analysis_result.get("clustering", {}),
                 "exposure_map": analysis_result.get("exposure_map", {}),
                 "final_conclusion": analysis_result.get("final_conclusion", ""),
+                "static_landmarks": analysis_result.get("static_landmarks", []),
+                "entity_triplets": analysis_result.get("entity_triplets", []),
+                "geo_markers": geo_markers,
             }),
         }
     except Exception:
@@ -65,7 +135,6 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(HEX_API_URL, headers=headers, json=payload)
-            # If 422 (params not found in project), retry without params
             if resp.status_code == 422:
                 resp = await client.post(HEX_API_URL, headers=headers, json={})
             resp.raise_for_status()
