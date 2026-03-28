@@ -63,7 +63,7 @@ TIME_KEYWORDS = {
 DAY_KEYWORDS = [
     "monday", "tuesday", "wednesday", "thursday", "friday",
     "saturday", "sunday", "weekday", "weekend",
-    "every day", "daily",
+    "every day", "daily", "tomorrow", "today",
 ]
 
 ACTIVITY_KEYWORDS = [
@@ -558,6 +558,64 @@ def detect_static_landmarks(footprint: UserFootprint) -> list[dict]:
     return landmarks
 
 
+def _infer_associated_entities(keyword: str, category: str, footprint: UserFootprint) -> dict:
+    """
+    Given a keyword (e.g. 'coffee') and its category (e.g. 'activities'),
+    scan the footprint to find what locations, times, and activities
+    co-occur with that keyword. Returns inferred associations.
+    """
+    co_streets: Counter = Counter()
+    co_businesses: Counter = Counter()
+    co_times: Counter = Counter()
+    co_activities: Counter = Counter()
+    match_count = 0
+
+    kw_lower = keyword.lower()
+
+    for entry in footprint.entries:
+        ents = entry.get("entities", {})
+        text_lower = entry.get("text", "").lower()
+
+        # Check if this entry contains the keyword
+        has_keyword = False
+        if category == "activities" and kw_lower in [a.lower() for a in ents.get("activities", [])]:
+            has_keyword = True
+        elif category == "businesses" and kw_lower in [b.lower() for b in ents.get("businesses", [])]:
+            has_keyword = True
+        elif category == "streets" and kw_lower in [s.lower() for s in ents.get("streets", [])]:
+            has_keyword = True
+        elif kw_lower in text_lower:
+            has_keyword = True
+
+        if not has_keyword:
+            continue
+
+        match_count += 1
+
+        for s in ents.get("streets", []):
+            co_streets[s.lower()] += 1
+        for b in ents.get("businesses", []):
+            co_businesses[b.lower()] += 1
+        for t in ents.get("times", []):
+            co_times[t.lower()] += 1
+        tc = entry.get("time_context")
+        if tc and tc.get("period"):
+            co_times[tc["period"]] += 1
+        for a in ents.get("activities", []):
+            if a.lower() != kw_lower:
+                co_activities[a.lower()] += 1
+
+    return {
+        "keyword": keyword,
+        "category": category,
+        "match_count": match_count,
+        "streets": dict(co_streets),
+        "businesses": dict(co_businesses),
+        "times": dict(co_times),
+        "activities": dict(co_activities),
+    }
+
+
 def detect_routine_correlations(
     new_entities: dict,
     new_time_context: dict | None,
@@ -566,22 +624,23 @@ def detect_routine_correlations(
     """
     Cross-reference new post entities with footprint patterns.
     Detect when location + time patterns form a predictable routine.
+    Includes INFERENCE: if the draft mentions 'coffee', and coffee always
+    happens at Market Street at 7am, that's an inferred routine leak.
     """
     correlations = []
     fp_entries = footprint.entries
 
-    # Check: does the new post share a street with footprint entries that have time patterns?
     new_streets = set(s.lower() for s in new_entities.get("streets", []))
     new_businesses = set(b.lower() for b in new_entities.get("businesses", []))
+    new_activities = set(a.lower() for a in new_entities.get("activities", []))
     new_period = new_time_context.get("period") if new_time_context else None
     new_days = set(d.lower() for d in new_entities.get("days", []))
 
-    # Time-of-day from text keywords
     new_time_kws = set(t["keyword"] for t in new_entities.get("time_context", []))
     if new_period:
         new_time_kws.add(new_period)
 
-    # Scan footprint for matching patterns
+    # ── Direct correlations (exact keyword matches) ──
     location_time_hits: list[dict] = []
     for entry in fp_entries:
         e_streets = set(s.lower() for s in entry["entities"].get("streets", []))
@@ -611,7 +670,6 @@ def detect_routine_correlations(
         for h in location_time_hits:
             locs.update(h["shared_locations"])
             times.update(h["shared_times"])
-
         correlations.append({
             "type": "routine_correlation",
             "evidence": f"Location-time pattern: {', '.join(locs)} during {', '.join(times)}",
@@ -619,7 +677,53 @@ def detect_routine_correlations(
             "details": location_time_hits,
         })
 
-    # Check: same business across multiple days
+    # ── INFERENCE: Activity/keyword → associated locations & times ──
+    # If the draft mentions "coffee" and coffee always happens at Market St
+    # at 7am in the baseline, that's an inferred leak even without the
+    # user explicitly typing "Market Street" or "morning".
+    all_draft_keywords = new_activities | new_businesses | new_streets
+    for kw in all_draft_keywords:
+        cat = "activities" if kw in new_activities else "businesses" if kw in new_businesses else "streets"
+        assoc = _infer_associated_entities(kw, cat, footprint)
+
+        if assoc["match_count"] < 1:
+            continue
+
+        # Find inferred locations the draft didn't mention
+        inferred_streets = {s for s, c in assoc["streets"].items() if c >= 1} - new_streets
+        inferred_biz = {b for b, c in assoc["businesses"].items() if c >= 1} - new_businesses
+        inferred_times = {t for t, c in assoc["times"].items() if c >= 1} - new_time_kws
+
+        inferred_locs = inferred_streets | inferred_biz
+        if not inferred_locs and not inferred_times:
+            continue
+
+        # Build evidence string
+        parts = []
+        if inferred_locs:
+            loc_list = ", ".join(l.title() for l in list(inferred_locs)[:3])
+            parts.append(f"you always do that at {loc_list}")
+        if inferred_times:
+            time_list = ", ".join(list(inferred_times)[:3])
+            parts.append(f"usually in the {time_list}")
+
+        evidence = (
+            f"Your draft mentions '{kw}'. Based on your history, "
+            + " and ".join(parts)
+            + f". Even without naming these directly, a stalker who's studied your "
+            f"posts would know exactly where and when you mean."
+        )
+
+        correlations.append({
+            "type": "inferred_routine",
+            "evidence": evidence,
+            "keyword": kw,
+            "inferred_locations": list(inferred_locs),
+            "inferred_times": list(inferred_times),
+            "matching_entries": assoc["match_count"],
+        })
+
+    # ── Frequent business visits ──
     biz_entries: dict[str, int] = {}
     for entry in fp_entries:
         for b in entry["entities"].get("businesses", []):
@@ -660,6 +764,16 @@ def generate_vulnerability_map(
             findings.append({
                 "category": "Routine Leak",
                 "severity": "high",
+                "finding": corr["evidence"],
+                "evidence_count": corr["matching_entries"],
+            })
+        elif corr["type"] == "inferred_routine":
+            # Inferred = draft doesn't name the location/time, but baseline
+            # shows they always co-occur with the mentioned keyword
+            severity = "critical" if corr["matching_entries"] >= 2 else "high"
+            findings.append({
+                "category": "Inferred Routine",
+                "severity": severity,
                 "finding": corr["evidence"],
                 "evidence_count": corr["matching_entries"],
             })
@@ -943,14 +1057,14 @@ def generate_conclusion(
 ) -> str:
     """
     Synthesize entity triplets and vulnerability findings into a
-    human-readable final conclusion.
+    concrete, conversational conclusion that reads like a stalker's notes.
     """
     if not triplets and not vulnerability_map:
         return "Baseline established. No recurring routine detected yet."
 
-    parts: list[str] = []
+    lines: list[str] = []
 
-    # Triplet-based conclusions
+    # --- Triplet-based: conversational "here's what we know about you" ---
     for triplet in triplets:
         loc = triplet["location"].title()
         time = triplet["time"]
@@ -959,85 +1073,86 @@ def generate_conclusion(
         count = triplet["entry_count"]
 
         if day and time and activity:
-            parts.append(
-                f"Pattern Detected: Every {day.title()}, you {activity} "
-                f"at {time} at {loc}. ({count} matching data points)"
-            )
-        elif day and activity:
-            parts.append(
-                f"Pattern Detected: Every {day.title()}, you {activity} "
-                f"at {loc}. ({count} matching data points)"
+            lines.append(
+                f"You {activity} at {loc} every {day.title()} in the {time}. "
+                f"This appeared in {count} of your posts."
             )
         elif time and activity:
-            parts.append(
-                f"Pattern Detected: You regularly {activity} during the "
-                f"{time} at {loc}. ({count} matching data points)"
+            lines.append(
+                f"You {activity} at {loc} in the {time} — this shows up "
+                f"in {count} of your posts."
             )
-        elif time and not activity:
-            parts.append(
-                f"Pattern Detected: You are regularly at {loc} during the "
-                f"{time}. ({count} matching data points)"
+        elif day and activity:
+            lines.append(
+                f"Every {day.title()}, you {activity} at {loc}."
             )
-        elif day:
-            parts.append(
-                f"Pattern Detected: You are regularly at {loc} on "
-                f"{day.title()}s. ({count} matching data points)"
+        elif time:
+            lines.append(
+                f"You're regularly at {loc} in the {time}. "
+                f"This showed up in {count} of your posts."
+            )
+        elif activity:
+            lines.append(
+                f"You frequently {activity} at {loc}."
             )
         else:
-            parts.append(
-                f"Pattern Detected: {loc} appears in {count} of your posts. "
-                f"This location is trackable."
+            lines.append(
+                f"{loc} keeps showing up in your posts — {count} times so far."
             )
 
-    # Static landmark conclusions
+    # --- Static landmarks: "you're always at X" ---
     for lm in static_landmarks:
         if lm["type"] == "street":
-            parts.append(
-                f"Static Landmark: '{lm['value'].title()}' appears in "
-                f"{lm['percentage']}% of your footprint — likely a Home or Work location."
-            )
+            name = lm["value"].title()
+            pct = lm["percentage"]
+            if pct >= 60:
+                lines.append(
+                    f"You're always at {name} — it appears in {pct}% of your footprint. "
+                    f"This is almost certainly near where you live or work."
+                )
+            else:
+                lines.append(
+                    f"{name} appears in {pct}% of your posts. "
+                    f"Someone watching you would flag this as a regular stop."
+                )
         elif lm["type"] == "coordinates":
-            parts.append(
-                f"Static Landmark: GPS cluster at ({lm['value']['lat']}, {lm['value']['lon']}) "
-                f"appears in {lm['percentage']}% of your footprint."
+            lines.append(
+                f"Your photos keep pinging the same GPS coordinates "
+                f"({lm['value']['lat']}, {lm['value']['lon']}). "
+                f"That's in {lm['percentage']}% of your footprint."
             )
 
-    # Critical vulnerability callouts
+    # --- Critical vulnerability callouts ---
     critical = [v for v in vulnerability_map if v["severity"] == "critical"]
     for v in critical:
-        if v["category"] == "Identity Leak":
-            parts.append(f"CRITICAL: {v['finding']}")
+        if v["category"] == "Routine Leak":
+            lines.append(v["finding"])
 
-    # If we found patterns but no triplets, summarize from vulnerability map
+    # --- Fallback when no triplets but we have vulns ---
     if not triplets and vulnerability_map:
-        high_findings = [v for v in vulnerability_map if v["severity"] in ("critical", "high")]
-        if high_findings:
-            parts.append(
-                f"Warning: {len(high_findings)} high-severity finding(s) detected. "
-                f"Your digital footprint reveals exploitable patterns."
-            )
-        else:
-            parts.append(
-                "Low-level correlations detected. Continue building your footprint "
-                "for deeper pattern analysis."
+        high = [v for v in vulnerability_map if v["severity"] in ("critical", "high")]
+        if high:
+            lines.append(
+                f"We found {len(high)} high-severity pattern(s) in your posts. "
+                f"Your digital footprint reveals exploitable routines."
             )
 
-    # Breach probability summary
+    # --- Bottom-line risk statement ---
     if breach_probability >= 70:
-        parts.append(
-            f"Overall Exposure: {breach_probability}% — Your posting pattern "
-            f"is highly predictable. A motivated adversary could reconstruct your routine."
+        lines.append(
+            f"Bottom line: a stranger could predict where you'll be and when, "
+            f"just from your public posts. Exposure score: {breach_probability}%."
         )
     elif breach_probability >= 40:
-        parts.append(
-            f"Overall Exposure: {breach_probability}% — Moderate risk. "
-            f"Several data points correlate across your footprint."
+        lines.append(
+            f"Moderate exposure ({breach_probability}%). Several of your posts "
+            f"line up enough to sketch a partial routine."
         )
 
-    if not parts:
+    if not lines:
         return "Baseline established. No recurring routine detected yet."
 
-    return " | ".join(parts)
+    return "\n\n".join(lines)
 
 
 # ══════════════════════════════════════════════
@@ -1196,6 +1311,69 @@ def cluster_routines(
     }
 
 
+def _summarize_entry(entry: dict) -> tuple[str, str]:
+    """Build a short label and a longer detail string for a footprint entry."""
+    ents = entry.get("entities", {})
+    streets = ents.get("streets", [])
+    businesses = ents.get("businesses", [])
+    times = ents.get("times", [])
+    activities = ents.get("activities", [])
+    tc = entry.get("time_context") or {}
+
+    # Build a concise label like "7am coffee, Market St"
+    parts = []
+    if times:
+        parts.append(times[0])
+    elif tc.get("period"):
+        parts.append(tc["period"])
+    if activities:
+        parts.append(activities[0])
+    if businesses:
+        parts.append(businesses[0])
+    if streets:
+        parts.append(streets[0])
+
+    label = ", ".join(parts) if parts else entry.get("label", entry["id"])
+
+    # Build a longer detail string
+    detail_parts = []
+    if streets:
+        detail_parts.append(f"Streets: {', '.join(streets)}")
+    if businesses:
+        detail_parts.append(f"Places: {', '.join(businesses)}")
+    if times:
+        detail_parts.append(f"Time: {', '.join(times)}")
+    if activities:
+        detail_parts.append(f"Activity: {', '.join(activities)}")
+
+    detail = ". ".join(detail_parts) if detail_parts else entry.get("label", "")
+
+    return label, detail
+
+
+def _edge_label_for_entries(entry_a: dict, entry_b_entities: dict) -> str:
+    """Find what two entries have in common for the edge label."""
+    ents_a = entry_a.get("entities", {})
+    shared = []
+
+    for street in ents_a.get("streets", []):
+        if street in entry_b_entities.get("streets", []):
+            shared.append(street)
+    for biz in ents_a.get("businesses", []):
+        if biz in entry_b_entities.get("businesses", []):
+            shared.append(biz)
+    for time in ents_a.get("times", []):
+        if time in entry_b_entities.get("times", []):
+            shared.append(time)
+    for act in ents_a.get("activities", []):
+        if act in entry_b_entities.get("activities", []):
+            shared.append(act)
+
+    if shared:
+        return "both mention " + ", ".join(shared[:3])
+    return "identity link"
+
+
 def build_exposure_map(
     new_entities: dict,
     ocr_entities: dict | None,
@@ -1213,45 +1391,77 @@ def build_exposure_map(
         for sims in category_sims.values()
         for s in sims
     )
+
+    # Build a descriptive label for the draft
+    draft_parts = []
+    if new_entities.get("times"):
+        draft_parts.append(new_entities["times"][0])
+    if new_entities.get("activities"):
+        draft_parts.append(new_entities["activities"][0])
+    if new_entities.get("streets"):
+        draft_parts.append(new_entities["streets"][0])
+    draft_label = "Your Draft: " + ", ".join(draft_parts) if draft_parts else "Your Draft Post"
+
     nodes.append({
         "id": "new_post",
-        "label": "Your Draft Post",
+        "label": draft_label,
         "type": "post",
         "color": "#ef4444" if has_critical else "#f59e0b",
+        "detail": f"Entities found: {', '.join(draft_parts)}" if draft_parts else "No specific entities extracted",
     })
 
     # OCR node
     if ocr_entities and ocr_entities.get("high_value_ocr"):
+        ocr_items = [h["value"] for h in ocr_entities["high_value_ocr"]]
         nodes.append({
             "id": "ocr_extract",
-            "label": "Image Intelligence (OCR)",
+            "label": f"OCR: {', '.join(ocr_items[:2])}",
             "type": "extraction",
             "high_value": ocr_entities["high_value_ocr"],
             "color": "#06b6d4",
+            "detail": f"OCR detected in image: {', '.join(ocr_items)}",
         })
-        edges.append({"source": "new_post", "target": "ocr_extract", "type": "contains", "weight": 1.0})
+        edges.append({
+            "source": "new_post", "target": "ocr_extract",
+            "type": "contains", "weight": 1.0,
+            "label": "image scan",
+        })
 
     # EXIF node
     if metadata.get("gps_lat") or metadata.get("datetime_original"):
+        exif_parts = []
+        if metadata.get("gps_lat"):
+            exif_parts.append(f"GPS: {metadata['gps_lat']}, {metadata.get('gps_lon', '?')}")
+        if metadata.get("datetime_original"):
+            exif_parts.append(f"Taken: {metadata['datetime_original']}")
         nodes.append({
             "id": "exif_metadata",
-            "label": "EXIF Metadata",
+            "label": "EXIF: " + ", ".join(exif_parts[:1]),
             "type": "metadata",
             "details": metadata,
             "color": "#f43f5e",
+            "detail": ". ".join(exif_parts),
         })
-        edges.append({"source": "new_post", "target": "exif_metadata", "type": "leaks", "weight": 1.0})
+        edges.append({
+            "source": "new_post", "target": "exif_metadata",
+            "type": "leaks", "weight": 1.0,
+            "label": "metadata leak",
+        })
 
     # Static landmark nodes
     for i, lm in enumerate(static_landmarks):
         lm_id = f"landmark_{i}"
+        val = lm["value"] if isinstance(lm["value"], str) else "GPS cluster"
         nodes.append({
             "id": lm_id,
-            "label": f"Landmark: {lm['value'] if isinstance(lm['value'], str) else 'GPS cluster'}",
+            "label": f"{val.title()} ({lm['percentage']}%)",
             "type": "landmark",
             "classification": lm["classification"],
             "percentage": lm["percentage"],
             "color": "#ef4444",
+            "risk_level": min(lm["percentage"] / 100.0, 1.0),
+            "weight": min(lm["percentage"] / 100.0, 1.0),
+            "detail": f"{val.title()} appears in {lm['percentage']}% of posts. Classified as: {lm['classification']}",
         })
 
     # Footprint entries connected by global similarity
@@ -1260,18 +1470,24 @@ def build_exposure_map(
         sim = global_sims.get(entry["id"], 0)
         if sim < 0.02:
             continue
+
+        label, detail = _summarize_entry(entry)
+        edge_label = _edge_label_for_entries(entry, new_entities)
+
         nodes.append({
             "id": entry["id"],
-            "label": entry["label"],
+            "label": label,
             "type": "footprint",
             "similarity": sim,
             "color": "#ef4444" if sim >= 0.3 else "#f59e0b" if sim >= 0.15 else "#444",
+            "detail": detail,
         })
         edges.append({
             "source": "new_post",
             "target": entry["id"],
             "type": "identity_link",
             "weight": sim,
+            "label": edge_label,
         })
 
     return {"nodes": nodes, "edges": edges}
@@ -1417,34 +1633,34 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
         cluster_boost = clustering["cluster_confidence"] * 20.0
         breach_probability = round(min(breach_probability + cluster_boost, 100.0), 1)
 
-        # Override conclusion with ML-enriched version
+        # Override conclusion with ML-enriched conversational version
         tc = clustering["target_cluster"]
+        anchors = ", ".join(tc["anchor_hits"][:5])
+        top_terms = ", ".join(tc["top_terms"][:5])
         conclusion = (
-            f"[SIGNAL DETECTED]: K-Means clustering mapped your Instagram history "
-            f"into {clustering['n_clusters']} distinct routines. Your draft post was "
-            f"predicted to belong to the \"{clustering['draft_cluster_name']}\" cluster "
+            f"[SIGNAL DETECTED]: We grouped your past posts into "
+            f"{clustering['n_clusters']} routines using K-Means clustering. "
+            f"This draft matches your \"{clustering['draft_cluster_name']}\" routine "
             f"with {clustering['cluster_confidence']*100:.0f}% confidence.\n\n"
-            f"[LEAK SOURCE]: This cluster contains {tc['size']} historical posts and "
-            f"scored the highest risk ({tc['risk_score']*100:.0f}%) due to anchors: "
-            f"{', '.join(tc['anchor_hits'][:5])}. "
-            f"Top terms: {', '.join(tc['top_terms'][:5])}.\n\n"
-            f"[FORECAST]: The AI mapped your behavior into {clustering['n_clusters']} "
-            f"distinct routines and predicted with high confidence that this draft "
-            f"exposes the highly sensitive \"{clustering['draft_cluster_name']}\" routine. "
-            f"A motivated adversary could use this pattern to predict your location "
-            f"and behavior. Recommendation: Remove identifying details before posting."
+            f"[LEAK SOURCE]: {tc['size']} of your previous posts follow the same "
+            f"pattern — keywords like {anchors} keep appearing together. "
+            f"{conclusion}\n\n"
+            f"[FORECAST]: Someone studying your posts would already know about "
+            f"this routine. Posting this draft confirms it and makes the pattern "
+            f"even easier to exploit. Remove specific locations, times, and "
+            f"habitual language before posting."
         )
     elif clustering:
         # Draft didn't match the target cluster but we still have cluster data
         conclusion = (
-            f"[SIGNAL DETECTED]: K-Means clustering identified "
-            f"{clustering['n_clusters']} behavioral routines in your footprint. "
-            f"Your draft was assigned to the \"{clustering['draft_cluster_name']}\" "
-            f"cluster ({clustering['cluster_confidence']*100:.0f}% confidence).\n\n"
+            f"[SIGNAL DETECTED]: We found {clustering['n_clusters']} routines "
+            f"in your post history. This draft was mapped to your "
+            f"\"{clustering['draft_cluster_name']}\" routine "
+            f"({clustering['cluster_confidence']*100:.0f}% confidence).\n\n"
             f"[LEAK SOURCE]: {conclusion}\n\n"
-            f"[FORECAST]: Draft does not directly expose your highest-risk routine "
-            f"(\"{clustering['target_cluster']['name']}\"), but still reveals behavioral "
-            f"patterns. Exercise caution with location and time references."
+            f"[FORECAST]: This draft doesn't expose your highest-risk routine "
+            f"(\"{clustering['target_cluster']['name']}\"), but it still leaks "
+            f"behavioral patterns. Be careful with location and time references."
         )
 
     # Build graph

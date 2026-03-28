@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
@@ -49,13 +49,47 @@ const EDGE_LABELS: Record<string, string> = {
   contains: "extracted from",
 };
 
+function getNodeColor(node: any): string {
+  if (node.type === "post") return "#ff2222";
+  if (node.type === "extraction") return "#06b6d4";
+  if (node.type === "metadata") return "#f43f5e";
+  if (node.cluster_id !== undefined) {
+    return CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
+  }
+  if (node.similarity && node.similarity >= 0.2) return node.color || "#888";
+  return "#444";
+}
+
+function getNodeSize(node: any): number {
+  const w = node.weight ?? 0;
+  if (node.type === "post") return 16;
+  if (node.type === "metadata") return 7 + w * 13;
+  if (node.type === "extraction") return 6 + w * 9;
+  const sim = node.similarity ?? w;
+  return 5 + sim * 16;
+}
+
 export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
+  const hoveredIdRef = useRef<string | null>(null);
   const [dimensions, setDimensions] = useState({ width: 680, height: 480 });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hoveredNode, setHoveredNode] = useState<any>(null);
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  // Memoize graph data so it doesn't recreate on hover
+  const graphData = useMemo(() => ({
+    nodes: nodes.map((n) => ({ ...n })),
+    links: edges.map((e) => ({
+      source: e.source,
+      target: e.target,
+      edgeType: e.type,
+      weight: e.weight,
+      category: e.category,
+      connectionStrength: e.connection_strength,
+      edgeLabel: e.label || EDGE_LABELS[e.type] || e.type,
+    })),
+  }), [nodes, edges]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -90,46 +124,14 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     return () => window.removeEventListener("keydown", handleKey);
   }, [isFullscreen]);
 
-  const graphData = {
-    nodes: nodes.map((n) => ({ ...n })),
-    links: edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      edgeType: e.type,
-      weight: e.weight,
-      category: e.category,
-      connectionStrength: e.connection_strength,
-      edgeLabel: e.label || EDGE_LABELS[e.type] || e.type,
-    })),
-  };
-
-  const nodeColor = useCallback((node: any) => {
-    if (node.type === "post") return "#ff2222";
-    if (node.type === "extraction") return "#06b6d4";
-    if (node.type === "metadata") return "#f43f5e";
-    if (node.cluster_id !== undefined) {
-      return CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
-    }
-    if (node.similarity && node.similarity >= 0.2) return node.color || "#888";
-    return "#444";
-  }, []);
-
-  const nodeSize = useCallback((node: any) => {
-    const w = node.weight ?? 0;
-    if (node.type === "post") return 16;
-    if (node.type === "metadata") return 7 + w * 13;
-    if (node.type === "extraction") return 6 + w * 9;
-    const sim = node.similarity ?? w;
-    return 5 + sim * 16;
-  }, []);
-
+  // Paint functions use ref for hovered state to avoid re-creating callbacks
   const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-    const size = nodeSize(node);
-    const color = nodeColor(node);
+    const size = getNodeSize(node);
+    const color = getNodeColor(node);
     const x = node.x ?? 0;
     const y = node.y ?? 0;
     const riskLevel = typeof node.risk_level === "number" ? node.risk_level : 0;
-    const isHovered = hoveredNode?.id === node.id;
+    const isHovered = hoveredIdRef.current === node.id;
 
     // Hover highlight ring
     if (isHovered) {
@@ -183,7 +185,7 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     }
     ctx.stroke();
 
-    // Label -- truncate long labels
+    // Label
     let label = node.label || node.id;
     if (label.length > 32) label = label.slice(0, 30) + "...";
 
@@ -192,7 +194,6 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
 
-    // Label background for readability
     if (globalScale > 0.5) {
       const metrics = ctx.measureText(label);
       const pad = 2 / globalScale;
@@ -210,7 +211,7 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
       : node.type === "extraction" ? "#7dd3e8"
       : "#aaa";
     ctx.fillText(label, x, y + size + 2);
-  }, [nodeColor, nodeSize, hoveredNode]);
+  }, []);
 
   const paintLink = useCallback((link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const sx = link.source?.x ?? 0;
@@ -278,12 +279,10 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
     }
   }, []);
 
-  const handleNodeHover = useCallback((node: any, prevNode: any) => {
+  // Hover handler updates ref (no re-render) + sets state for tooltip panel
+  const handleNodeHover = useCallback((node: any) => {
+    hoveredIdRef.current = node?.id || null;
     setHoveredNode(node || null);
-  }, []);
-
-  const handleBackgroundClick = useCallback(() => {
-    setHoveredNode(null);
   }, []);
 
   if (nodes.length === 0) return null;
@@ -368,14 +367,13 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
           nodeCanvasObject={paintNode}
           linkCanvasObject={paintLink}
           nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
-            const size = nodeSize(node);
+            const size = getNodeSize(node);
             ctx.beginPath();
             ctx.arc(node.x ?? 0, node.y ?? 0, size + 4, 0, 2 * Math.PI);
             ctx.fillStyle = color;
             ctx.fill();
           }}
           onNodeHover={handleNodeHover}
-          onBackgroundClick={handleBackgroundClick}
           cooldownTicks={120}
           d3AlphaDecay={0.02}
           d3VelocityDecay={0.25}
@@ -384,7 +382,7 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
           warmupTicks={30}
         />
 
-        {/* Hover tooltip */}
+        {/* Hover tooltip — rendered outside graph canvas, won't cause graph re-render */}
         {hoveredNode && (
           <div
             style={{
@@ -403,7 +401,7 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" }}>
               <div style={{
                 width: 8, height: 8, borderRadius: "50%",
-                backgroundColor: nodeColor(hoveredNode),
+                backgroundColor: getNodeColor(hoveredNode),
               }} />
               <span style={{ color: "#c8ccd0", fontSize: "0.78rem", fontWeight: 700 }}>
                 {hoveredNode.label || hoveredNode.id}
@@ -446,7 +444,7 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
         )}
       </div>
 
-      {/* Legend + fullscreen hint */}
+      {/* Legend */}
       <div
         style={{
           padding: isFullscreen ? "0.75rem 1.5rem" : "0.6rem 1rem",
@@ -468,7 +466,6 @@ export default function StalkerWeb({ nodes, edges }: StalkerWebProps) {
             <span style={{ color: "#444", fontSize: "0.65rem" }}>{item.label}</span>
           </div>
         ))}
-        {/* Cluster legend */}
         {clusterNames.size > 0 && (
           <>
             <div style={{ width: 1, height: 12, backgroundColor: "#1a1a1a", margin: "0 0.25rem" }} />

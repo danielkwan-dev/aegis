@@ -119,10 +119,10 @@ def get_demo_sync_result(username: str) -> dict:
             "day_patterns": 3,
         },
         "final_conclusion": (
-            "Routine detected: Morning activity on Market Street appears in "
-            "2 of 3 posts (7:00-7:30 AM window). Broadway/Financial District "
-            "establishes an evening pattern. Geographic cluster suggests a "
-            "daily corridor centered on the Market Street area."
+            "You get coffee on Market Street almost every morning around 7 AM — "
+            "that showed up in 2 out of 3 posts. In the evenings, you're walking "
+            "around Broadway and the Financial District. That's enough to map "
+            "out your entire daily corridor."
         ),
     }
 
@@ -252,21 +252,23 @@ def get_demo_analysis_result() -> dict:
             },
         ],
         "final_conclusion": (
-            "[SIGNAL DETECTED]: K-Means clustering mapped your Instagram history "
-            "into 3 distinct routines. Your draft post was predicted to belong to "
-            "the \"Morning Market Street\" cluster with 94% confidence.\n\n"
-            "[LEAK SOURCE]: This cluster contains 2 historical posts and scored "
-            "the highest risk (87%) due to anchors: morning, market, coffee, "
-            "starbucks, commute. OCR also detected a Market St street sign in "
-            "Post 2's background photo, reinforcing the location anchor.\n\n"
-            "[FORECAST]: The AI mapped your behavior into 3 distinct routines "
-            "and predicted with high confidence that this draft exposes the "
-            "highly sensitive \"Morning Commute\" routine. A motivated adversary "
-            "could use this pattern to predict your location at Starbucks on "
-            "Market Street between 7:00 and 7:30 AM on weekdays. Combined with "
-            "the Broadway/Financial District evening cluster, your full daily "
-            "corridor is mappable. Recommendation: Remove street name and "
-            "time-of-day references before posting."
+            "[SIGNAL DETECTED]: We grouped your past posts into 3 routines "
+            "using K-Means clustering. This draft matches your \"Morning "
+            "Market Street\" routine with 94% confidence.\n\n"
+            "[LEAK SOURCE]: 2 of your previous posts follow the same pattern — "
+            "keywords like morning, market, coffee, starbucks, commute keep "
+            "appearing together. You get coffee every morning around 7 AM at "
+            "the Starbucks on Market Street, then catch the 7:15 bus. That's "
+            "in 2 out of 3 posts. OCR also picked up a Market St street sign "
+            "in the background of Post 2's photo, so even when you didn't "
+            "mention the street, your image gave it away.\n\n"
+            "[FORECAST]: Someone studying your posts would know exactly where "
+            "you are at 7:15 AM on any weekday — Starbucks, Market Street, "
+            "window seat. Your evening routine on Broadway and the Financial "
+            "District fills in the rest of your day. Posting this draft "
+            "confirms the pattern and makes it even easier to predict your "
+            "location. Remove the street name, time of day, and the word "
+            "'routine' before posting."
         ),
         "signals": {
             "draft_text_length": len(DEMO_DRAFT_POST),
@@ -283,42 +285,52 @@ def get_demo_analysis_result() -> dict:
         },
         "web": {
             "nodes": [
-                # Draft post (center) -- predicted into Cluster 0 (Morning Commute)
-                {"id": "new_post", "label": "Your Draft Post", "type": "post", "color": "#ff2222", "weight": 1.0, "risk_level": 0.95, "cluster_id": 0, "cluster_name": "Morning Market Street"},
+                # Draft post (center)
+                {"id": "new_post", "label": "Your Draft: morning, coffee, Market St", "type": "post", "color": "#ff2222", "weight": 1.0, "risk_level": 0.95, "cluster_id": 0, "cluster_name": "Morning Market Street",
+                 "detail": "Your draft mentions morning + coffee + Market Street. All three match your highest-risk routine."},
                 # Extracted entities from draft
-                {"id": "ent_market", "label": "Market Street", "type": "extraction", "color": "#06b6d4", "category": "street", "weight": 0.95, "risk_level": 0.9},
-                {"id": "ent_morning", "label": "morning", "type": "extraction", "color": "#06b6d4", "category": "time", "weight": 0.7, "risk_level": 0.6},
-                {"id": "ent_coffee", "label": "coffee", "type": "extraction", "color": "#06b6d4", "category": "activity", "weight": 0.5, "risk_level": 0.4},
-                # Landmarks -- Market St is the recurring anchor (largest node)
-                {"id": "lm_market", "label": "LANDMARK: Market St (67%)", "type": "metadata", "color": "#f43f5e", "risk_level": 1.0, "weight": 1.0},
-                {"id": "lm_broadway", "label": "LANDMARK: Broadway", "type": "metadata", "color": "#f43f5e", "risk_level": 0.6, "weight": 0.5},
+                {"id": "ent_market", "label": "Market Street", "type": "extraction", "color": "#06b6d4", "category": "street", "weight": 0.95, "risk_level": 0.9,
+                 "detail": "Street name extracted from your draft text. Appears in 67% of your post history."},
+                {"id": "ent_morning", "label": "morning", "type": "extraction", "color": "#06b6d4", "category": "time", "weight": 0.7, "risk_level": 0.6,
+                 "detail": "Time-of-day keyword. Narrows your location window to 6:00-11:59 AM."},
+                {"id": "ent_coffee", "label": "coffee", "type": "extraction", "color": "#06b6d4", "category": "activity", "weight": 0.5, "risk_level": 0.4,
+                 "detail": "Activity keyword. Combined with location + time, pins you to a specific coffee shop."},
+                # Landmarks
+                {"id": "lm_market", "label": "Market St (67%)", "type": "metadata", "color": "#f43f5e", "risk_level": 1.0, "weight": 1.0,
+                 "detail": "Market Street appears in 2 of 3 posts (67%). Classified as daily commute route. Highest-risk anchor."},
+                {"id": "lm_broadway", "label": "Broadway (33%)", "type": "metadata", "color": "#f43f5e", "risk_level": 0.6, "weight": 0.5,
+                 "detail": "Broadway appears in 1 of 3 posts. Evening activity zone in the Financial District."},
                 # OCR detection
-                {"id": "ocr_sign", "label": "OCR: Market St sign", "type": "metadata", "color": "#f43f5e", "risk_level": 0.9, "weight": 0.8},
-                # Scraped posts -- Cluster 0: Morning Commute (TARGET), Cluster 1: Evening Activity
-                {"id": "h1", "label": "7am coffee at Starbucks on Market St...", "type": "history", "color": "#c084fc", "similarity": 0.87, "weight": 0.85, "risk_level": 0.7, "cluster_id": 0, "cluster_name": "Morning Market Street"},
-                {"id": "h2", "label": "Morning routine, 7:15 bus...", "type": "history", "color": "#c084fc", "similarity": 0.78, "weight": 0.75, "risk_level": 0.65, "cluster_id": 0, "cluster_name": "Morning Market Street"},
-                {"id": "h3", "label": "Post-work walk, Broadway, downtown...", "type": "history", "color": "#555", "similarity": 0.31, "weight": 0.35, "risk_level": 0.25, "cluster_id": 1, "cluster_name": "Evening Downtown"},
+                {"id": "ocr_sign", "label": "OCR: Market St sign", "type": "metadata", "color": "#f43f5e", "risk_level": 0.9, "weight": 0.8,
+                 "detail": "Street sign reading 'Market St' detected via OCR in Post 2's background photo. You didn't type it — your image leaked it."},
+                # Scraped posts with descriptive labels
+                {"id": "h1", "label": "7am coffee, Starbucks, Market St", "type": "history", "color": "#c084fc", "similarity": 0.87, "weight": 0.85, "risk_level": 0.7, "cluster_id": 0, "cluster_name": "Morning Market Street",
+                 "detail": "Post 1: '7am coffee at Starbucks on Market Street, oat milk latte, window seat.' Mentions exact time, business, street, and seating habit."},
+                {"id": "h2", "label": "morning routine, 7:15 bus", "type": "history", "color": "#c084fc", "similarity": 0.78, "weight": 0.75, "risk_level": 0.65, "cluster_id": 0, "cluster_name": "Morning Market Street",
+                 "detail": "Post 2: 'Morning routine, caught the 7:15 bus.' No street name in text, but OCR found a Market St sign in the photo background."},
+                {"id": "h3", "label": "evening walk, Broadway, Financial Dist", "type": "history", "color": "#555", "similarity": 0.31, "weight": 0.35, "risk_level": 0.25, "cluster_id": 1, "cluster_name": "Evening Downtown",
+                 "detail": "Post 3: 'Post-work walk through the Financial District, dinner on Broadway.' Establishes your evening routine and work area."},
             ],
             "edges": [
                 # Draft -> extracted entities
-                {"source": "new_post", "target": "ent_market", "type": "leaks", "weight": 0.95, "connection_strength": "text"},
-                {"source": "new_post", "target": "ent_morning", "type": "leaks", "weight": 0.8, "connection_strength": "text"},
-                {"source": "new_post", "target": "ent_coffee", "type": "leaks", "weight": 0.6, "connection_strength": "text"},
-                # Entity -> landmark (OCR + Text = thick glowing line)
-                {"source": "ent_market", "target": "lm_market", "type": "confirms", "weight": 0.95, "connection_strength": "ocr+text"},
-                # OCR connection (OCR + Text = thick glowing line)
-                {"source": "ocr_sign", "target": "lm_market", "type": "confirms", "weight": 0.9, "connection_strength": "ocr+text"},
-                {"source": "ocr_sign", "target": "h2", "type": "detected_in", "weight": 0.85, "connection_strength": "ocr"},
+                {"source": "new_post", "target": "ent_market", "type": "leaks", "weight": 0.95, "connection_strength": "text", "label": "leaks street name"},
+                {"source": "new_post", "target": "ent_morning", "type": "leaks", "weight": 0.8, "connection_strength": "text", "label": "leaks time of day"},
+                {"source": "new_post", "target": "ent_coffee", "type": "leaks", "weight": 0.6, "connection_strength": "text", "label": "leaks activity"},
+                # Entity -> landmark (OCR + Text)
+                {"source": "ent_market", "target": "lm_market", "type": "confirms", "weight": 0.95, "connection_strength": "ocr+text", "label": "text + OCR confirm"},
+                # OCR connections
+                {"source": "ocr_sign", "target": "lm_market", "type": "confirms", "weight": 0.9, "connection_strength": "ocr+text", "label": "photo confirms location"},
+                {"source": "ocr_sign", "target": "h2", "type": "detected_in", "weight": 0.85, "connection_strength": "ocr", "label": "sign found in photo"},
                 # Entity -> matching posts
-                {"source": "ent_market", "target": "h1", "type": "similarity", "weight": 0.87, "connection_strength": "text"},
-                {"source": "ent_market", "target": "h2", "type": "similarity", "weight": 0.78, "connection_strength": "ocr+text"},
-                {"source": "ent_morning", "target": "h1", "type": "similarity", "weight": 0.82, "connection_strength": "text"},
-                {"source": "ent_morning", "target": "h2", "type": "similarity", "weight": 0.75, "connection_strength": "text"},
+                {"source": "ent_market", "target": "h1", "type": "similarity", "weight": 0.87, "connection_strength": "text", "label": "both mention Market St"},
+                {"source": "ent_market", "target": "h2", "type": "similarity", "weight": 0.78, "connection_strength": "ocr+text", "label": "OCR + text match"},
+                {"source": "ent_morning", "target": "h1", "type": "similarity", "weight": 0.82, "connection_strength": "text", "label": "both mention morning"},
+                {"source": "ent_morning", "target": "h2", "type": "similarity", "weight": 0.75, "connection_strength": "text", "label": "same time window"},
                 # Post 3 geographic cluster
-                {"source": "lm_broadway", "target": "h3", "type": "confirms", "weight": 0.6, "connection_strength": "text"},
-                {"source": "lm_market", "target": "lm_broadway", "type": "corridor", "weight": 0.5, "connection_strength": "inference"},
+                {"source": "lm_broadway", "target": "h3", "type": "confirms", "weight": 0.6, "connection_strength": "text", "label": "mentions Broadway"},
+                {"source": "lm_market", "target": "lm_broadway", "type": "corridor", "weight": 0.5, "connection_strength": "inference", "label": "daily commute corridor"},
                 # Pattern links between history posts
-                {"source": "h1", "target": "h2", "type": "pattern", "weight": 0.8, "connection_strength": "text"},
+                {"source": "h1", "target": "h2", "type": "pattern", "weight": 0.8, "connection_strength": "text", "label": "same morning routine"},
             ],
         },
         "exposure_map": {
