@@ -422,7 +422,7 @@ export default function AuditResult({ result }: AuditResultProps) {
       )}
 
       {/* Stalker's Web + Hex */}
-      <VisualizationWrapper web={result.web} hex={result.hex} />
+      <VisualizationWrapper web={result.web} />
 
       {/* Signals: OCR + EXIF */}
       {result.signals.ocr_text && (
