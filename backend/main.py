@@ -1,6 +1,8 @@
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from engine import analyze_threat
+
 app = FastAPI(title="Aegis API")
 
 app.add_middleware(
@@ -22,19 +24,9 @@ async def simulate(
     text: str = Form(""),
     image: UploadFile | None = File(None),
 ):
-    image_info = None
+    image_bytes = None
     if image and image.filename:
-        contents = await image.read()
-        image_info = {
-            "filename": image.filename,
-            "content_type": image.content_type,
-            "size_bytes": len(contents),
-        }
+        image_bytes = await image.read()
 
-    return {
-        "status": "received",
-        "text_length": len(text),
-        "text_preview": text[:200] if text else None,
-        "image": image_info,
-        "message": "Payload received. ML analysis not yet implemented.",
-    }
+    result = analyze_threat(draft_text=text, image_bytes=image_bytes)
+    return result
