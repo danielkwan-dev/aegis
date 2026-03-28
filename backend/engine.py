@@ -91,6 +91,19 @@ COORD_PATTERN = re.compile(
     r'(-?\d{1,3}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})'
 )
 
+# Named places: "Fleetwood Park", "Central Library", "Lincoln Elementary"
+PLACE_SUFFIXES = [
+    "park", "plaza", "square", "center", "centre", "mall", "station",
+    "library", "elementary", "school", "church", "temple", "mosque",
+    "hospital", "clinic", "beach", "pier", "wharf", "bridge",
+    "market", "garden", "gardens", "field", "arena", "stadium",
+]
+
+PLACE_PATTERN = re.compile(
+    r'\b((?:\w+\s+){1,3}(?:' + '|'.join(PLACE_SUFFIXES) + r'))\b',
+    re.IGNORECASE,
+)
+
 
 def extract_entities(text: str) -> dict:
     """Extract structured entities from free text."""
@@ -102,6 +115,20 @@ def extract_entities(text: str) -> dict:
         val = (m.group(1) or m.group(2)).strip()
         if len(val) > 4:
             streets.append(val)
+
+    # Named places (parks, stations, schools, etc.)
+    places = []
+    noise_words = {"the", "a", "an", "at", "to", "in", "on", "my", "for", "and", "or", "is", "was",
+                    "heading", "going", "went", "go", "from", "near", "by", "this", "that", "walk"}
+    for m in PLACE_PATTERN.finditer(text):
+        val = m.group(0).strip()
+        # Remove leading noise words: "at Fleetwood Park" → "Fleetwood Park"
+        words = val.split()
+        while words and words[0].lower() in noise_words:
+            words.pop(0)
+        cleaned = " ".join(words)
+        if len(cleaned) > 3 and len(cleaned.split()) >= 2:
+            places.append(cleaned)
 
     # Businesses
     found_businesses = []
@@ -133,6 +160,7 @@ def extract_entities(text: str) -> dict:
 
     return {
         "streets": streets,
+        "places": places,
         "businesses": found_businesses,
         "times": times,
         "time_context": time_context,
@@ -382,6 +410,7 @@ def _build_category_text(entry: dict) -> dict[str, str]:
 
     location_parts = []
     location_parts.extend(ents.get("streets", []))
+    location_parts.extend(ents.get("places", []))
     location_parts.extend(ents.get("businesses", []))
     for c in ents.get("coordinates", []):
         location_parts.append(f"{c['lat']} {c['lon']}")
@@ -747,7 +776,271 @@ def generate_vulnerability_map(
 
 
 # ══════════════════════════════════════════════
-# 8. Exposure map graph (nodes + edges)
+# 8. Conclusion Engine — Pattern Aggregator + NLG
+# ══════════════════════════════════════════════
+
+def _compute_ocr_weighted_activity_sim(
+    activity_text: str,
+    entry_activity_text: str,
+    ocr_boost: float = 2.0,
+    ocr_terms: set[str] | None = None,
+) -> float:
+    """
+    TF-IDF cosine similarity for activities, with OCR-sourced terms
+    receiving a multiplied weight in the TF-IDF vector.
+    """
+    if not activity_text.strip() or not entry_activity_text.strip():
+        return 0.0
+
+    try:
+        vectorizer = TfidfVectorizer(stop_words="english")
+        matrix = vectorizer.fit_transform([entry_activity_text, activity_text])
+        base_sim = float(cosine_similarity(matrix[1:], matrix[:1]).flatten()[0])
+
+        # Boost if OCR terms appear in both texts
+        if ocr_terms:
+            entry_lower = entry_activity_text.lower()
+            overlap = sum(1 for t in ocr_terms if t in entry_lower)
+            if overlap > 0:
+                base_sim = min(base_sim + (overlap * 0.15 * ocr_boost), 1.0)
+
+        return round(base_sim, 4)
+    except ValueError:
+        return 0.0
+
+
+def scan_entity_triplets(footprint: UserFootprint, ocr_terms: set[str] | None = None) -> list[dict]:
+    """
+    Scan the footprint for recurring Entity Triplets: Time + Location + Activity.
+    A triplet forms when:
+      - A location appears in >2 entries
+      - Those same entries share a time signal
+      - Activity similarity across those entries is >0.7 (OCR-weighted)
+    """
+    entries = footprint.entries
+    if len(entries) < 3:
+        return []
+
+    triplets: list[dict] = []
+
+    # Build location → entry index mapping
+    location_entries: dict[str, list[int]] = {}
+    for i, entry in enumerate(entries):
+        locs = set()
+        for s in entry["entities"].get("streets", []):
+            locs.add(s.lower().strip())
+        for p in entry["entities"].get("places", []):
+            locs.add(p.lower().strip())
+        for b in entry["entities"].get("businesses", []):
+            locs.add(b.lower().strip())
+        if entry["has_gps"]:
+            locs.add(f"gps_{entry['metadata']['gps_lat']}_{entry['metadata']['gps_lon']}")
+        for loc in locs:
+            if loc not in location_entries:
+                location_entries[loc] = []
+            location_entries[loc].append(i)
+
+    for location, indices in location_entries.items():
+        if len(indices) < 2:
+            continue
+
+        # Find shared time signals among these entries
+        time_signals: Counter = Counter()
+        day_signals: Counter = Counter()
+        for idx in indices:
+            e = entries[idx]
+            tc = e.get("time_context")
+            if tc and tc.get("period"):
+                time_signals[tc["period"]] += 1
+            if tc and tc.get("day_of_week"):
+                day_signals[tc["day_of_week"]] += 1
+            for kw in e["entities"].get("time_context", []):
+                time_signals[kw["keyword"]] += 1
+            for d in e["entities"].get("days", []):
+                day_signals[d.lower()] += 1
+
+        # Need at least 2 entries sharing a time
+        shared_times = {t: c for t, c in time_signals.items() if c >= 2}
+        shared_days = {d: c for d, c in day_signals.items() if c >= 2}
+
+        if not shared_times and not shared_days:
+            continue
+
+        # Check activity similarity across the entries at this location+time
+        activity_texts = []
+        for idx in indices:
+            e = entries[idx]
+            acts = e["entities"].get("activities", [])
+            act_text = " ".join(acts) if acts else ""
+            # Also pull activity-like terms from the full text
+            act_text += " " + " ".join(
+                w for w in e["text"].lower().split()
+                if w in set(ACTIVITY_KEYWORDS)
+            )
+            activity_texts.append(act_text.strip())
+
+        # Pairwise activity similarity (OCR-weighted)
+        if len(activity_texts) >= 2 and any(t for t in activity_texts):
+            non_empty = [(i, t) for i, t in enumerate(activity_texts) if t]
+            if len(non_empty) >= 2:
+                avg_sim = 0.0
+                count = 0
+                for a_idx in range(len(non_empty)):
+                    for b_idx in range(a_idx + 1, len(non_empty)):
+                        sim = _compute_ocr_weighted_activity_sim(
+                            non_empty[a_idx][1], non_empty[b_idx][1],
+                            ocr_terms=ocr_terms,
+                        )
+                        avg_sim += sim
+                        count += 1
+                avg_sim = avg_sim / count if count > 0 else 0.0
+
+                # Threshold: activity similarity > 0.7 OR strong location+time pattern (>2 entries)
+                activity_match = avg_sim > 0.7
+                strong_pattern = len(indices) >= 3
+            else:
+                avg_sim = 0.0
+                activity_match = False
+                strong_pattern = len(indices) >= 3
+        else:
+            avg_sim = 0.0
+            activity_match = False
+            strong_pattern = len(indices) >= 3
+
+        if activity_match or strong_pattern:
+            # Collect representative activities
+            all_acts: list[str] = []
+            for idx in indices:
+                all_acts.extend(entries[idx]["entities"].get("activities", []))
+            top_activity = Counter(all_acts).most_common(1)
+            activity_name = top_activity[0][0] if top_activity else None
+
+            best_time = max(shared_times, key=shared_times.get) if shared_times else None
+            best_day = max(shared_days, key=shared_days.get) if shared_days else None
+
+            triplets.append({
+                "location": location,
+                "time": best_time,
+                "day": best_day,
+                "activity": activity_name,
+                "entry_count": len(indices),
+                "activity_similarity": round(avg_sim, 4),
+                "time_matches": dict(shared_times),
+                "day_matches": dict(shared_days),
+            })
+
+    # Sort by entry count (strongest patterns first)
+    triplets.sort(key=lambda t: t["entry_count"], reverse=True)
+    return triplets
+
+
+def generate_conclusion(
+    triplets: list[dict],
+    vulnerability_map: list[dict],
+    static_landmarks: list[dict],
+    breach_probability: float,
+) -> str:
+    """
+    Synthesize entity triplets and vulnerability findings into a
+    human-readable final conclusion.
+    """
+    if not triplets and not vulnerability_map:
+        return "Baseline established. No recurring routine detected yet."
+
+    parts: list[str] = []
+
+    # Triplet-based conclusions
+    for triplet in triplets:
+        loc = triplet["location"].title()
+        time = triplet["time"]
+        day = triplet["day"]
+        activity = triplet["activity"]
+        count = triplet["entry_count"]
+
+        if day and time and activity:
+            parts.append(
+                f"Pattern Detected: Every {day.title()}, you {activity} "
+                f"at {time} at {loc}. ({count} matching data points)"
+            )
+        elif day and activity:
+            parts.append(
+                f"Pattern Detected: Every {day.title()}, you {activity} "
+                f"at {loc}. ({count} matching data points)"
+            )
+        elif time and activity:
+            parts.append(
+                f"Pattern Detected: You regularly {activity} during the "
+                f"{time} at {loc}. ({count} matching data points)"
+            )
+        elif time and not activity:
+            parts.append(
+                f"Pattern Detected: You are regularly at {loc} during the "
+                f"{time}. ({count} matching data points)"
+            )
+        elif day:
+            parts.append(
+                f"Pattern Detected: You are regularly at {loc} on "
+                f"{day.title()}s. ({count} matching data points)"
+            )
+        else:
+            parts.append(
+                f"Pattern Detected: {loc} appears in {count} of your posts. "
+                f"This location is trackable."
+            )
+
+    # Static landmark conclusions
+    for lm in static_landmarks:
+        if lm["type"] == "street":
+            parts.append(
+                f"Static Landmark: '{lm['value'].title()}' appears in "
+                f"{lm['percentage']}% of your footprint — likely a Home or Work location."
+            )
+        elif lm["type"] == "coordinates":
+            parts.append(
+                f"Static Landmark: GPS cluster at ({lm['value']['lat']}, {lm['value']['lon']}) "
+                f"appears in {lm['percentage']}% of your footprint."
+            )
+
+    # Critical vulnerability callouts
+    critical = [v for v in vulnerability_map if v["severity"] == "critical"]
+    for v in critical:
+        if v["category"] == "Identity Leak":
+            parts.append(f"CRITICAL: {v['finding']}")
+
+    # If we found patterns but no triplets, summarize from vulnerability map
+    if not triplets and vulnerability_map:
+        high_findings = [v for v in vulnerability_map if v["severity"] in ("critical", "high")]
+        if high_findings:
+            parts.append(
+                f"Warning: {len(high_findings)} high-severity finding(s) detected. "
+                f"Your digital footprint reveals exploitable patterns."
+            )
+        else:
+            parts.append(
+                "Low-level correlations detected. Continue building your footprint "
+                "for deeper pattern analysis."
+            )
+
+    # Breach probability summary
+    if breach_probability >= 70:
+        parts.append(
+            f"Overall Exposure: {breach_probability}% — Your posting pattern "
+            f"is highly predictable. A motivated adversary could reconstruct your routine."
+        )
+    elif breach_probability >= 40:
+        parts.append(
+            f"Overall Exposure: {breach_probability}% — Moderate risk. "
+            f"Several data points correlate across your footprint."
+        )
+
+    if not parts:
+        return "Baseline established. No recurring routine detected yet."
+
+    return " | ".join(parts)
+
+
+# ══════════════════════════════════════════════
+# 9. Exposure map graph (nodes + edges)
 # ══════════════════════════════════════════════
 
 ENTITY_COLORS = {
@@ -871,17 +1164,24 @@ def ingest_data_point(text: str, image_bytes: bytes | None, label: str | None = 
         label=label,
     )
 
+    # Run conclusion engine on updated footprint
+    triplets = scan_entity_triplets(user_footprint)
+    landmarks = detect_static_landmarks(user_footprint)
+    conclusion = generate_conclusion(triplets, [], landmarks, 0.0)
+
     return {
         "status": "secured",
         "message": "Data Point Secured",
         "entry": entry,
         "detected_entities": {
             "streets": entities["streets"],
+            "places": entities["places"],
             "businesses": entities["businesses"],
             "times": entities["times"],
             "coordinates": entities["coordinates"],
         },
         "exposure_map": user_footprint.exposure_map_stats(),
+        "final_conclusion": conclusion,
     }
 
 
@@ -925,6 +1225,7 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
             },
             "vulnerability_map": [],
             "breach_probability": 0.0,
+            "final_conclusion": "Baseline established. No recurring routine detected yet.",
             "web": {"nodes": [{"id": "new_post", "label": "Your Draft Post", "type": "post", "color": "#666"}], "edges": []},
             "exposure_map": user_footprint.exposure_map_stats(),
         }
@@ -956,6 +1257,13 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
     raw_score = sum(severity_weights.get(f["severity"], 0) for f in vuln_map)
     breach_probability = round(min(raw_score, 100.0), 1)
 
+    # Conclusion Engine — scan for entity triplets with OCR weighting
+    ocr_terms: set[str] | None = None
+    if ocr_text:
+        ocr_terms = set(w.lower() for w in ocr_text.split() if len(w) > 3)
+    triplets = scan_entity_triplets(user_footprint, ocr_terms=ocr_terms)
+    conclusion = generate_conclusion(triplets, vuln_map, static_landmarks, breach_probability)
+
     # Build graph
     web = build_exposure_map(new_entities, ocr_entities, metadata, category_sims, static_landmarks, user_footprint)
 
@@ -971,6 +1279,7 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
         "status": "analyzed",
         "detected_entities": {
             "streets": new_entities["streets"],
+            "places": new_entities["places"],
             "businesses": new_entities["businesses"],
             "times": new_entities["times"],
             "coordinates": new_entities["coordinates"],
@@ -979,6 +1288,8 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
         "breach_probability": breach_probability,
         "vulnerability_map": vuln_map,
         "static_landmarks": static_landmarks,
+        "entity_triplets": triplets,
+        "final_conclusion": conclusion,
         "signals": {
             "draft_text_length": len(draft_text),
             "ocr_text": ocr_text if ocr_text else None,
