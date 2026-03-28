@@ -117,7 +117,7 @@ def merge_signals(draft_text: str, ocr_text: str, metadata_text: str) -> str:
 
 
 # ──────────────────────────────────────────────
-# 4. Security baseline (in-memory exposure map)
+# 4. User footprint (in-memory exposure map)
 # ──────────────────────────────────────────────
 
 # Sensitive entity categories
@@ -139,7 +139,7 @@ def classify_sensitive_entity(text: str) -> str:
     return best if scores[best] > 0 else "general"
 
 
-class SecurityBaseline:
+class UserFootprint:
     """In-memory exposure map — the user's known digital footprint."""
 
     def __init__(self) -> None:
@@ -205,7 +205,7 @@ class SecurityBaseline:
 
 
 # Global instance
-security_baseline = SecurityBaseline()
+user_footprint = UserFootprint()
 
 
 # ──────────────────────────────────────────────
@@ -294,7 +294,77 @@ def detect_identity_links(merged_text: str, baseline: list[dict]) -> dict:
 
 
 # ──────────────────────────────────────────────
-# 6. Exposure Map — nodes + edges output
+# 6. Breach Report — human-readable warnings
+# ──────────────────────────────────────────────
+
+ENTITY_LABELS = {
+    "daily_route": "Routine: Daily Route",
+    "home": "Location: Home",
+    "work": "Location: Work",
+    "family": "Location: Family",
+    "general": "General Data",
+}
+
+
+def generate_breach_report(
+    threat_analysis: dict,
+    ocr_text: str,
+    metadata: dict,
+) -> list[dict]:
+    """
+    Generate human-readable breach warnings.
+    Each warning explains HOW the new post connects to a sensitive entity.
+    """
+    warnings: list[dict] = []
+
+    for link in threat_analysis["identity_links"]:
+        entity_label = ENTITY_LABELS.get(link["entity_type"], link["entity_type"])
+        similarity_pct = round(link["similarity"] * 100)
+
+        # Determine the signal source that created the link
+        signal_source = "Text overlap"
+        if ocr_text and any(word in link["text"].lower() for word in ocr_text.lower().split() if len(word) > 3):
+            signal_source = f"OCR: {ocr_text[:50]}"
+        elif metadata.get("gps_lat") and link.get("has_gps"):
+            signal_source = f"GPS: {metadata['gps_lat']}, {metadata['gps_lon']}"
+        elif metadata.get("datetime_original"):
+            signal_source = f"Timestamp: {metadata['datetime_original']}"
+
+        warnings.append({
+            "severity": threat_analysis["risk_level"],
+            "message": f"Warning: This post connects to [{entity_label}] via [{signal_source}] ({similarity_pct}% match)",
+            "entity_type": link["entity_type"],
+            "linked_entry": link["label"],
+            "similarity": link["similarity"],
+            "signal_source": signal_source,
+        })
+
+    # Add EXIF-specific warnings
+    if metadata.get("gps_lat"):
+        warnings.append({
+            "severity": "HIGH",
+            "message": f"Warning: Image contains GPS coordinates ({metadata['gps_lat']}, {metadata['gps_lon']}). This reveals your exact location.",
+            "entity_type": "exif_leak",
+            "linked_entry": "EXIF Metadata",
+            "similarity": 1.0,
+            "signal_source": "EXIF GPS",
+        })
+
+    if metadata.get("datetime_original"):
+        warnings.append({
+            "severity": "MEDIUM",
+            "message": f"Warning: Image contains timestamp ({metadata['datetime_original']}). This reveals when you were at this location.",
+            "entity_type": "exif_leak",
+            "linked_entry": "EXIF Metadata",
+            "similarity": 0.8,
+            "signal_source": "EXIF Timestamp",
+        })
+
+    return warnings
+
+
+# ──────────────────────────────────────────────
+# 7. Exposure Map — nodes + edges output
 # ──────────────────────────────────────────────
 
 ENTITY_COLORS = {
@@ -401,7 +471,7 @@ def ingest_data_point(text: str, image_bytes: bytes | None, label: str | None = 
     if not merged.strip():
         return {"status": "empty", "message": "No data to ingest."}
 
-    entry = security_baseline.ingest(
+    entry = user_footprint.ingest(
         text=merged,
         label=label,
         category=category,
@@ -412,7 +482,7 @@ def ingest_data_point(text: str, image_bytes: bytes | None, label: str | None = 
         "status": "secured",
         "message": "Data Point Secured",
         "entry": entry,
-        "exposure_map": security_baseline.exposure_map_stats(),
+        "exposure_map": user_footprint.exposure_map_stats(),
     }
 
 
@@ -433,11 +503,11 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
             "status": "empty",
             "message": "No text or image data to analyze.",
             "web": {"nodes": [], "edges": []},
-            "exposure_map": security_baseline.exposure_map_stats(),
+            "exposure_map": user_footprint.exposure_map_stats(),
         }
 
     # Check baseline state
-    baseline = security_baseline.entries
+    baseline = user_footprint.entries
     if len(baseline) == 0:
         return {
             "status": "initializing",
@@ -459,12 +529,13 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
                 "risk_level": "INITIALIZING",
                 "color": "#666",
             }], "edges": []},
-            "exposure_map": security_baseline.exposure_map_stats(),
+            "exposure_map": user_footprint.exposure_map_stats(),
         }
 
     # Detect identity links
     threat = detect_identity_links(merged, baseline)
     web = build_exposure_map(threat, ocr_text, metadata)
+    breach_report = generate_breach_report(threat, ocr_text, metadata)
 
     return {
         "status": "analyzed",
@@ -472,6 +543,7 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
         "max_similarity": threat["max_similarity"],
         "breach_probability": threat["breach_probability"],
         "entity_scores": threat["entity_scores"],
+        "breach_report": breach_report,
         "signals": {
             "draft_text_length": len(draft_text),
             "ocr_text": ocr_text if ocr_text else None,
@@ -479,5 +551,5 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
             "merged_length": len(merged),
         },
         "web": web,
-        "exposure_map": security_baseline.exposure_map_stats(),
+        "exposure_map": user_footprint.exposure_map_stats(),
     }

@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from engine import analyze_threat, ingest_data_point, security_baseline
+from engine import analyze_threat, ingest_data_point, user_footprint
 
 load_dotenv()
 
@@ -64,16 +64,16 @@ def health():
 def get_exposure_map():
     """Return current exposure map stats and all baseline entries."""
     return {
-        "exposure_map": security_baseline.exposure_map_stats(),
-        "entries": security_baseline.entries,
+        "exposure_map": user_footprint.exposure_map_stats(),
+        "entries": user_footprint.entries,
     }
 
 
 @app.delete("/api/exposure-map")
 def clear_exposure_map():
     """Clear all baseline data (reset for demo)."""
-    security_baseline.clear()
-    return {"status": "cleared", "exposure_map": security_baseline.exposure_map_stats()}
+    user_footprint.clear()
+    return {"status": "cleared", "exposure_map": user_footprint.exposure_map_stats()}
 
 
 @app.post("/api/audit-ingest")
