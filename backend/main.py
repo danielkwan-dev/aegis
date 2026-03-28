@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile
@@ -8,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from engine import analyze_threat, ingest_data_point, user_footprint
 from instagram import scrape_instagram
 from demo import get_demo_sync_result, get_demo_analysis_result, DEMO_BASELINE_POSTS, DEMO_DRAFT_POST
+
+DEMO_USERNAME = "aegis_yhack"
 
 load_dotenv()
 
@@ -104,8 +107,14 @@ async def sync_instagram(username: str = Form("")):
     if not username:
         return {"status": "error", "message": "No username provided."}
 
-    # Use preset demo data for reliable demo
-    return get_demo_sync_result(username)
+    if username.lower() == DEMO_USERNAME:
+        # Preset demo account -- simulate processing time
+        await asyncio.sleep(4)
+        return get_demo_sync_result(username)
+
+    # Live scrape for any other username
+    result = scrape_instagram(username)
+    return result
 
 
 @app.post("/api/analyze-threat")

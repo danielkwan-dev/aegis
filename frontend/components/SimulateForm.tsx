@@ -98,13 +98,14 @@ export default function SimulateForm() {
     setSyncError(null);
     setSyncProgress(0);
 
-    // Simulate progress while waiting for the backend
+    // Smooth progress: fills to ~95% over ~5s, never stalls
+    const startTime = Date.now();
     const progressInterval = setInterval(() => {
-      setSyncProgress((prev) => {
-        if (prev >= 85) return Math.min(prev + 0.5, 92);
-        return prev + Math.random() * 5;
-      });
-    }, 800);
+      const elapsed = (Date.now() - startTime) / 1000;
+      // Ease-out curve that approaches 95% over ~5 seconds
+      const target = 95 * (1 - Math.exp(-elapsed / 1.8));
+      setSyncProgress(target);
+    }, 100);
 
     try {
       const formData = new FormData();
