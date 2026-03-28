@@ -80,10 +80,9 @@ def clear_exposure_map():
 async def audit_ingest(
     text: str = Form(""),
     label: str = Form(""),
-    category: str = Form(""),
     image: UploadFile | None = File(None),
 ):
-    """Ingest a data point into the security baseline."""
+    """Ingest a data point into the user footprint."""
     image_bytes = None
     if image and image.filename:
         image_bytes = await image.read()
@@ -92,7 +91,6 @@ async def audit_ingest(
         text=text,
         image_bytes=image_bytes,
         label=label if label else None,
-        category=category if category else None,
     )
     return result
 
