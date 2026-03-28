@@ -21,6 +21,12 @@ interface AnalysisResult {
     nodes: any[];
     edges: any[];
   };
+  hex?: {
+    runId?: string;
+    runUrl?: string;
+    projectId?: string;
+    error?: string;
+  } | null;
 }
 
 export default function SimulateForm() {
@@ -177,7 +183,7 @@ export default function SimulateForm() {
             maxSimilarity={result.max_similarity}
             categoryScores={result.category_scores}
           />
-          <VisualizationWrapper web={result.web} />
+          <VisualizationWrapper web={result.web} hex={result.hex} />
 
           {/* Signal details (collapsed) */}
           {result.signals.ocr_text && (
