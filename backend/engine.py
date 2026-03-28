@@ -39,6 +39,13 @@ STREET_SUFFIXES = [
     "pkwy", "parkway", "cir", "circle", "hwy", "highway",
 ]
 
+# Well-known street names that don't follow "Name + Suffix" pattern
+KNOWN_STREETS = [
+    "broadway", "wall street", "fifth avenue", "main street",
+    "market street", "market st", "king street", "queen street",
+    "high street", "lombard street", "mission street", "embarcadero",
+]
+
 BUSINESSES = [
     "starbucks", "equinox", "blue bottle", "peet's", "chipotle",
     "walgreens", "cvs", "target", "walmart", "costco", "trader joe's",
@@ -73,9 +80,11 @@ ACTIVITY_KEYWORDS = [
     "class", "meeting", "lunch break",
 ]
 
-# Regex: "123 Main St" or "4th and Market"
+# Regex: "123 Main St" or "Market Street" or "4th and Market"
 STREET_PATTERN = re.compile(
     r'\b(\d+\s+\w+\s+(?:' + '|'.join(STREET_SUFFIXES) + r'))\b'
+    r'|'
+    r'\b([A-Z]\w+\s+(?:' + '|'.join(STREET_SUFFIXES) + r'))\b'
     r'|'
     r'\b(\w+\s+(?:and|&)\s+\w+)\b',
     re.IGNORECASE,
@@ -112,10 +121,37 @@ def extract_entities(text: str) -> dict:
 
     # Streets
     streets = []
+    # Common words that match street patterns but aren't streets
+    street_noise = {"ago and now", "out and about", "up and down", "here and there",
+                    "now and then", "back and forth", "come and go", "in and out",
+                    "over and over", "on and on", "more and more", "day and night",
+                    "hot and cold", "left and right", "this and that", "me and my",
+                    "you and i", "love and hate", "try and get", "sit and watch",
+                    "grab and go", "stop and go", "rise and shine", "wait and see",
+                    "hit and miss", "give and take", "lost and found", "pros and cons",
+                    "the street", "a street", "my street", "any street", "one street",
+                    "this street", "that street", "the road", "a road", "my road",
+                    "the drive", "the lane", "the way", "the place", "the court",
+                    "every way", "any way", "some way", "another way"}
     for m in STREET_PATTERN.finditer(text):
-        val = (m.group(1) or m.group(2)).strip()
-        if len(val) > 4:
+        val = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+        if len(val) > 4 and val.lower() not in street_noise:
             streets.append(val)
+    # Check for well-known street names (deduplicated)
+    # Normalize: "Market St" and "Market Street" are the same
+    def _normalize_street(s: str) -> str:
+        s = s.lower().strip().replace(".", "")
+        for suffix in STREET_SUFFIXES:
+            if s.endswith(" " + suffix):
+                s = s[:-(len(suffix))].strip()
+                break
+        return s
+
+    existing_normalized = {_normalize_street(s) for s in streets}
+    for known in KNOWN_STREETS:
+        if known in text_lower and _normalize_street(known) not in existing_normalized:
+            streets.append(known.title())
+            existing_normalized.add(_normalize_street(known))
 
     # Named places (parks, stations, schools, etc.)
     places = []
