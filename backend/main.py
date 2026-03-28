@@ -6,6 +6,7 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from engine import analyze_threat, ingest_data_point, user_footprint
+from instagram import scrape_instagram
 
 load_dotenv()
 
@@ -92,6 +93,16 @@ async def audit_ingest(
         image_bytes=image_bytes,
         label=label if label else None,
     )
+    return result
+
+
+@app.post("/api/sync-instagram")
+async def sync_instagram(username: str = Form("")):
+    """Scrape a public Instagram profile and ingest posts into the footprint."""
+    if not username.strip():
+        return {"status": "error", "message": "No username provided."}
+
+    result = scrape_instagram(username)
     return result
 
 

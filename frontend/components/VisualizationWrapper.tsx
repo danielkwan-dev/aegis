@@ -17,7 +17,7 @@ interface VisualizationWrapperProps {
   hex?: HexInfo | null;
 }
 
-const HEX_PROJECT_ID = "Aegis-032pYjM1wOXFrsi6nXOwag";
+const HEX_PROJECT_ID = "032pYjM1wOXFrsi6nXOwag";
 
 export default function VisualizationWrapper({ web, hex }: VisualizationWrapperProps) {
   // Build the Hex embed URL with graph data passed as input param

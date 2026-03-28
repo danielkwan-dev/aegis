@@ -14,6 +14,30 @@ interface ExposureMap {
   day_patterns: number;
 }
 
+interface SyncPost {
+  index: number;
+  label: string;
+  timestamp: string | null;
+  entities_found: {
+    streets: string[];
+    places: string[];
+    businesses: string[];
+    times: string[];
+  };
+  ocr_text: string | null;
+  has_location: boolean;
+}
+
+interface SyncResult {
+  status: string;
+  username?: string;
+  posts_scraped?: number;
+  posts?: SyncPost[];
+  exposure_map?: ExposureMap;
+  final_conclusion?: string;
+  message?: string;
+}
+
 interface AnalysisResult {
   status: string;
   detected_entities: {
@@ -48,73 +72,65 @@ interface AnalysisResult {
   message?: string;
 }
 
-interface IngestResult {
-  status: string;
-  message: string;
-  detected_entities?: {
-    streets: string[];
-    places: string[];
-    businesses: string[];
-    times: string[];
-    coordinates: string[];
-  };
-  exposure_map: ExposureMap;
-  final_conclusion?: string;
-}
-
 export default function SimulateForm() {
+  // Step 1: Instagram sync
+  const [username, setUsername] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState(0);
+
+  // Step 2: Threat analysis
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
-  const [ingesting, setIngesting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [ingestMsg, setIngestMsg] = useState<string | null>(null);
-  const [ingestEntities, setIngestEntities] = useState<string[]>([]);
   const [exposureMap, setExposureMap] = useState<ExposureMap | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const ingestFileRef = useRef<HTMLInputElement>(null);
 
-  const [ingestText, setIngestText] = useState("");
-  const [ingestFile, setIngestFile] = useState<File | null>(null);
+  async function handleSync() {
+    const handle = username.replace("@", "").trim();
+    if (!handle) return;
 
-  async function handleIngest() {
-    setIngesting(true);
-    setIngestMsg(null);
-    setIngestEntities([]);
+    setSyncing(true);
+    setSyncResult(null);
+    setSyncError(null);
+    setSyncProgress(0);
+
+    // Simulate progress while waiting for the backend
+    const progressInterval = setInterval(() => {
+      setSyncProgress((prev) => {
+        if (prev >= 90) return prev;
+        return prev + Math.random() * 8;
+      });
+    }, 600);
 
     try {
       const formData = new FormData();
-      formData.append("text", ingestText);
-      if (ingestFile) formData.append("image", ingestFile);
+      formData.append("username", handle);
 
-      const res = await fetch(`${API_URL}/api/audit-ingest`, {
+      const res = await fetch(`${API_URL}/api/sync-instagram`, {
         method: "POST",
         body: formData,
       });
 
-      const data: IngestResult = await res.json();
-      setIngestMsg(data.message || "Ingested.");
-      setExposureMap(data.exposure_map);
+      const data: SyncResult = await res.json();
+      clearInterval(progressInterval);
+      setSyncProgress(100);
 
-      // Collect detected entities for display
-      if (data.detected_entities) {
-        const ents: string[] = [
-          ...data.detected_entities.streets,
-          ...data.detected_entities.places,
-          ...data.detected_entities.businesses,
-          ...data.detected_entities.times,
-        ];
-        setIngestEntities(ents);
+      if (data.status === "synced") {
+        setSyncResult(data);
+        if (data.exposure_map) setExposureMap(data.exposure_map);
+      } else {
+        setSyncError(data.message || "Failed to sync profile.");
       }
-
-      setIngestText("");
-      setIngestFile(null);
     } catch (err) {
-      console.error("Ingest error:", err);
-      setIngestMsg("Error connecting to backend.");
+      clearInterval(progressInterval);
+      console.error("Sync error:", err);
+      setSyncError("Error connecting to backend. Is the FastAPI server running?");
     } finally {
-      setIngesting(false);
+      setSyncing(false);
     }
   }
 
@@ -169,6 +185,8 @@ export default function SimulateForm() {
     marginBottom: "0.75rem",
   };
 
+  const profileSynced = syncResult?.status === "synced";
+
   return (
     <div>
       {/* Exposure Map Stats Bar */}
@@ -205,94 +223,159 @@ export default function SimulateForm() {
         </div>
       )}
 
-      {/* STEP 1: Establish Baseline */}
+      {/* STEP 1: Instagram OSINT */}
       <div style={{ marginBottom: "2.5rem", paddingBottom: "2rem", borderBottom: "1px solid #141618" }}>
-        <div style={{ ...labelStyle, color: "#16a34a" }}>STEP 1 // ESTABLISH BASELINE</div>
+        <div style={{ ...labelStyle, color: "#16a34a" }}>STEP 1 // INSTAGRAM OSINT</div>
         <p style={{ color: "#555", fontSize: "0.78rem", margin: "0 0 1rem", lineHeight: 1.5 }}>
-          Feed your past posts, photos, and check-ins to build the exposure map.
-          The more data you provide, the more accurate the threat analysis becomes.
+          Enter a public Instagram handle. Aegis will scrape their last 15 posts,
+          run OCR on images, extract locations and timestamps, and build the exposure map.
         </p>
 
-        <textarea
-          value={ingestText}
-          onChange={(e) => setIngestText(e.target.value)}
-          placeholder="Paste a past post, caption, or check-in..."
-          rows={3}
-          style={{ ...inputStyle, resize: "vertical", marginBottom: "0.75rem" }}
-        />
-
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
+        <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem" }}>
+          <div style={{ position: "relative", flex: 1 }}>
+            <span
+              style={{
+                position: "absolute",
+                left: "0.75rem",
+                top: "50%",
+                transform: "translateY(-50%)",
+                color: "#444",
+                fontSize: "0.85rem",
+                pointerEvents: "none",
+              }}
+            >
+              @
+            </span>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !syncing && handleSync()}
+              placeholder="username"
+              disabled={syncing}
+              style={{
+                ...inputStyle,
+                paddingLeft: "1.6rem",
+              }}
+            />
+          </div>
           <button
-            type="button"
-            onClick={() => ingestFileRef.current?.click()}
+            onClick={handleSync}
+            disabled={syncing || !username.trim()}
             style={{
-              padding: "0.35rem 0.85rem",
-              backgroundColor: "#141618",
-              border: "1px solid #1e2228",
-              borderRadius: "5px",
-              color: "#888",
-              cursor: "pointer",
-              fontSize: "0.75rem",
+              padding: "0.6rem 1.5rem",
+              backgroundColor: syncing ? "#141618" : "#0a1f0a",
+              color: syncing ? "#555" : "#16a34a",
+              border: `1px solid ${syncing ? "#1e2228" : "#16a34a30"}`,
+              borderRadius: "6px",
+              fontWeight: 600,
+              fontSize: "0.82rem",
               fontFamily: "inherit",
+              cursor: syncing ? "not-allowed" : "pointer",
+              letterSpacing: "0.02em",
+              whiteSpace: "nowrap",
             }}
           >
-            + Attach photo
+            {syncing ? "Scanning..." : "Scan Profile"}
           </button>
-          <span style={{ color: "#444", fontSize: "0.75rem" }}>
-            {ingestFile ? ingestFile.name : "No file"}
-          </span>
-          <input
-            ref={ingestFileRef}
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={(e) => setIngestFile(e.target.files?.[0] ?? null)}
-          />
         </div>
 
-        <button
-          onClick={handleIngest}
-          disabled={ingesting || (!ingestText && !ingestFile)}
-          style={{
-            padding: "0.6rem 1.5rem",
-            backgroundColor: ingesting ? "#141618" : "#0a1f0a",
-            color: ingesting ? "#555" : "#16a34a",
-            border: `1px solid ${ingesting ? "#1e2228" : "#16a34a30"}`,
-            borderRadius: "6px",
-            fontWeight: 600,
-            fontSize: "0.82rem",
-            fontFamily: "inherit",
-            cursor: ingesting ? "not-allowed" : "pointer",
-            letterSpacing: "0.02em",
-          }}
-        >
-          {ingesting ? "Securing..." : "Secure Data Point"}
-        </button>
-
-        {ingestMsg && (
-          <span style={{ marginLeft: "0.75rem", color: "#16a34a", fontSize: "0.78rem" }}>
-            {ingestMsg}
-          </span>
+        {/* Progress bar */}
+        {syncing && (
+          <div style={{ marginBottom: "1rem" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                marginBottom: "0.3rem",
+              }}
+            >
+              <span style={{ color: "#16a34a", fontSize: "0.7rem", fontWeight: 600 }}>
+                Scanning @{username.replace("@", "")}...
+              </span>
+              <span style={{ color: "#444", fontSize: "0.7rem" }}>
+                {Math.round(syncProgress)}%
+              </span>
+            </div>
+            <div
+              style={{
+                width: "100%",
+                height: 4,
+                backgroundColor: "#141618",
+                borderRadius: 2,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: `${syncProgress}%`,
+                  height: "100%",
+                  backgroundColor: "#16a34a",
+                  borderRadius: 2,
+                  transition: "width 0.4s ease",
+                }}
+              />
+            </div>
+          </div>
         )}
 
-        {/* Detected entities from ingest */}
-        {ingestEntities.length > 0 && (
-          <div style={{ marginTop: "0.75rem", display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-            {ingestEntities.map((ent, i) => (
-              <span
-                key={i}
-                style={{
-                  padding: "0.15rem 0.45rem",
-                  backgroundColor: "#06b6d410",
-                  border: "1px solid #06b6d420",
-                  borderRadius: "3px",
-                  fontSize: "0.68rem",
-                  color: "#06b6d4",
-                }}
-              >
-                {ent}
+        {/* Sync error */}
+        {syncError && (
+          <p style={{ color: "#dc2626", fontSize: "0.78rem", margin: "0.5rem 0 0" }}>
+            {syncError}
+          </p>
+        )}
+
+        {/* Sync results */}
+        {profileSynced && syncResult && (
+          <div
+            style={{
+              padding: "1rem 1.25rem",
+              backgroundColor: "#0a1a0a",
+              border: "1px solid #16a34a20",
+              borderRadius: "8px",
+              animation: "fadeInUp 0.4s ease-out",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
+              <span style={{ color: "#16a34a", fontSize: "0.78rem", fontWeight: 600 }}>
+                @{syncResult.username} scanned
               </span>
-            ))}
+              <span style={{ color: "#444", fontSize: "0.7rem" }}>
+                {syncResult.posts_scraped} posts ingested
+              </span>
+            </div>
+
+            {/* Post summary tags */}
+            {syncResult.posts && syncResult.posts.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.75rem" }}>
+                {syncResult.posts.flatMap((p) => [
+                  ...p.entities_found.streets,
+                  ...p.entities_found.places,
+                  ...p.entities_found.businesses,
+                ]).filter((v, i, a) => a.indexOf(v) === i).slice(0, 20).map((ent, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      padding: "0.15rem 0.45rem",
+                      backgroundColor: "#06b6d410",
+                      border: "1px solid #06b6d420",
+                      borderRadius: "3px",
+                      fontSize: "0.65rem",
+                      color: "#06b6d4",
+                    }}
+                  >
+                    {ent}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {syncResult.final_conclusion && (
+              <p style={{ color: "#667", fontSize: "0.75rem", margin: 0, lineHeight: 1.5 }}>
+                {syncResult.final_conclusion}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -300,7 +383,7 @@ export default function SimulateForm() {
       {/* STEP 2: Pre-Post Analysis */}
       <div style={{ ...labelStyle, color: "#dc2626" }}>STEP 2 // PRE-POST ANALYSIS</div>
       <p style={{ color: "#555", fontSize: "0.78rem", margin: "0 0 1rem", lineHeight: 1.5 }}>
-        Paste your draft post below. Aegis will scan it against your baseline
+        Paste your draft post below. Aegis will scan it against the scraped baseline
         to detect Identity Links that could expose sensitive patterns.
       </p>
 
