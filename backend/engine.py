@@ -16,6 +16,7 @@ import json
 from datetime import datetime
 
 import pytesseract
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 from sklearn.feature_extraction.text import TfidfVectorizer
