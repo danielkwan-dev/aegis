@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Env files
+*.local
+.env
+.env.*
+!.env.local.example
+
+# Python
+backend/__pycache__/
+backend/*.pyc
+backend/venv/
+
+# Logs
+*.log
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
