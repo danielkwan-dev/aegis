@@ -170,7 +170,7 @@ def get_demo_analysis_result() -> dict:
             "timestamps": 0.7843,
             "activities": 0.6217,
         },
-        "breach_probability": 82.5,
+        "breach_probability": 95.0,
         "vulnerability_map": [
             {
                 "category": "Identity Leak",
@@ -252,19 +252,21 @@ def get_demo_analysis_result() -> dict:
             },
         ],
         "final_conclusion": (
-            "[SIGNAL DETECTED]: Draft post references 'Market Street' and "
-            "'morning coffee', overlapping with 2 of 3 scraped Instagram posts. "
-            "Location match confidence: 87.1%. Time window match: 7:00-7:30 AM.\n\n"
-            "[LEAK SOURCE]: Text analysis (caption mentions 'Market Street' by name). "
-            "OCR detection (Market St street sign visible in Post 2 background photo). "
-            "Temporal correlation (morning timestamps in Post 1 and Post 2).\n\n"
-            "[FORECAST]: Entity Triplet [Morning + Market Street + Coffee] confirmed "
-            "with 94% confidence. An adversary with access to this Instagram profile "
-            "and this draft post could predict your location at Starbucks on Market "
-            "Street between 7:00 and 7:30 AM on weekdays. Combined with the "
-            "Broadway/Financial District evening pattern, your full daily corridor "
-            "is mappable. Recommendation: Remove street name and time-of-day "
-            "references before posting."
+            "[SIGNAL DETECTED]: K-Means clustering mapped your Instagram history "
+            "into 3 distinct routines. Your draft post was predicted to belong to "
+            "the \"Morning Market Street\" cluster with 94% confidence.\n\n"
+            "[LEAK SOURCE]: This cluster contains 2 historical posts and scored "
+            "the highest risk (87%) due to anchors: morning, market, coffee, "
+            "starbucks, commute. OCR also detected a Market St street sign in "
+            "Post 2's background photo, reinforcing the location anchor.\n\n"
+            "[FORECAST]: The AI mapped your behavior into 3 distinct routines "
+            "and predicted with high confidence that this draft exposes the "
+            "highly sensitive \"Morning Commute\" routine. A motivated adversary "
+            "could use this pattern to predict your location at Starbucks on "
+            "Market Street between 7:00 and 7:30 AM on weekdays. Combined with "
+            "the Broadway/Financial District evening cluster, your full daily "
+            "corridor is mappable. Recommendation: Remove street name and "
+            "time-of-day references before posting."
         ),
         "signals": {
             "draft_text_length": len(DEMO_DRAFT_POST),
@@ -281,8 +283,8 @@ def get_demo_analysis_result() -> dict:
         },
         "web": {
             "nodes": [
-                # Draft post (center)
-                {"id": "new_post", "label": "Your Draft Post", "type": "post", "color": "#ff2222", "weight": 1.0, "risk_level": 0.82},
+                # Draft post (center) -- predicted into Cluster 0 (Morning Commute)
+                {"id": "new_post", "label": "Your Draft Post", "type": "post", "color": "#ff2222", "weight": 1.0, "risk_level": 0.95, "cluster_id": 0, "cluster_name": "Morning Market Street"},
                 # Extracted entities from draft
                 {"id": "ent_market", "label": "Market Street", "type": "extraction", "color": "#06b6d4", "category": "street", "weight": 0.95, "risk_level": 0.9},
                 {"id": "ent_morning", "label": "morning", "type": "extraction", "color": "#06b6d4", "category": "time", "weight": 0.7, "risk_level": 0.6},
@@ -292,10 +294,10 @@ def get_demo_analysis_result() -> dict:
                 {"id": "lm_broadway", "label": "LANDMARK: Broadway", "type": "metadata", "color": "#f43f5e", "risk_level": 0.6, "weight": 0.5},
                 # OCR detection
                 {"id": "ocr_sign", "label": "OCR: Market St sign", "type": "metadata", "color": "#f43f5e", "risk_level": 0.9, "weight": 0.8},
-                # Scraped posts
-                {"id": "h1", "label": "7am coffee at Starbucks on Market St...", "type": "history", "color": "#c084fc", "similarity": 0.87, "weight": 0.85, "risk_level": 0.7},
-                {"id": "h2", "label": "Morning routine, 7:15 bus...", "type": "history", "color": "#c084fc", "similarity": 0.78, "weight": 0.75, "risk_level": 0.65},
-                {"id": "h3", "label": "Post-work walk, Broadway, downtown...", "type": "history", "color": "#555", "similarity": 0.31, "weight": 0.35, "risk_level": 0.25},
+                # Scraped posts -- Cluster 0: Morning Commute (TARGET), Cluster 1: Evening Activity
+                {"id": "h1", "label": "7am coffee at Starbucks on Market St...", "type": "history", "color": "#c084fc", "similarity": 0.87, "weight": 0.85, "risk_level": 0.7, "cluster_id": 0, "cluster_name": "Morning Market Street"},
+                {"id": "h2", "label": "Morning routine, 7:15 bus...", "type": "history", "color": "#c084fc", "similarity": 0.78, "weight": 0.75, "risk_level": 0.65, "cluster_id": 0, "cluster_name": "Morning Market Street"},
+                {"id": "h3", "label": "Post-work walk, Broadway, downtown...", "type": "history", "color": "#555", "similarity": 0.31, "weight": 0.35, "risk_level": 0.25, "cluster_id": 1, "cluster_name": "Evening Downtown"},
             ],
             "edges": [
                 # Draft -> extracted entities
@@ -326,5 +328,38 @@ def get_demo_analysis_result() -> dict:
             "unique_businesses": 2,
             "tracked_activities": 4,
             "day_patterns": 3,
+        },
+        "clustering": {
+            "n_clusters": 3,
+            "draft_cluster_id": 0,
+            "draft_cluster_name": "Morning Market Street",
+            "draft_hits_target": True,
+            "cluster_confidence": 0.94,
+            "clusters": [
+                {
+                    "id": 0,
+                    "name": "Morning Market Street",
+                    "size": 2,
+                    "risk_score": 0.87,
+                    "top_terms": ["market", "morning", "coffee", "starbucks", "7am"],
+                    "is_target": True,
+                },
+                {
+                    "id": 1,
+                    "name": "Evening Downtown",
+                    "size": 1,
+                    "risk_score": 0.31,
+                    "top_terms": ["broadway", "downtown", "financial", "night", "dinner"],
+                    "is_target": False,
+                },
+                {
+                    "id": 2,
+                    "name": "Uncategorized",
+                    "size": 0,
+                    "risk_score": 0.0,
+                    "top_terms": [],
+                    "is_target": False,
+                },
+            ],
         },
     }

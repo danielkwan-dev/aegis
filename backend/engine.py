@@ -25,6 +25,7 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import KMeans
 import numpy as np
 
 
@@ -1052,6 +1053,149 @@ ENTITY_COLORS = {
 }
 
 
+# ══════════════════════════════════════════════
+# 9. K-Means Routine Clustering
+# ══════════════════════════════════════════════
+
+# High-risk anchor terms that flag a cluster as the "Target Cluster"
+HIGH_RISK_ANCHORS = {
+    # Location anchors (streets, landmarks)
+    "market", "elm", "broadway", "4th", "main", "park", "station",
+    # Temporal anchors
+    "morning", "7am", "7:15", "7:30", "8am", "commute", "daily",
+    "monday", "tuesday", "wednesday", "thursday", "friday",
+    # Activity anchors
+    "coffee", "starbucks", "gym", "office", "bus", "train", "routine",
+}
+
+
+def cluster_routines(
+    footprint: UserFootprint,
+    draft_text: str,
+    n_clusters: int = 3,
+) -> dict | None:
+    """
+    On-the-fly K-Means routine clustering.
+
+    1. Vectorize all historical captions + draft via TF-IDF
+    2. Fit KMeans on historical vectors only
+    3. Profile each cluster for high-risk anchors
+    4. Predict which cluster the draft falls into
+    5. Return cluster analysis with threat assessment
+    """
+    baseline = footprint.entries
+    if len(baseline) < n_clusters:
+        return None  # Not enough data to form meaningful clusters
+
+    # ── Data Prep ──
+    historical_texts = [entry["text"] for entry in baseline]
+    all_texts = historical_texts + [draft_text]
+
+    try:
+        vectorizer = TfidfVectorizer(
+            stop_words="english",
+            max_features=500,
+            ngram_range=(1, 2),
+        )
+        tfidf_matrix = vectorizer.fit_transform(all_texts)
+    except ValueError:
+        return None  # Empty vocabulary
+
+    feature_names = vectorizer.get_feature_names_out()
+    historical_vectors = tfidf_matrix[:-1]
+    draft_vector = tfidf_matrix[-1:]
+
+    # ── Training Step (.fit) ──
+    actual_k = min(n_clusters, len(baseline))
+    model = KMeans(n_clusters=actual_k, random_state=42, n_init=10)
+    model.fit(historical_vectors)
+
+    # ── Cluster Profiling ──
+    cluster_labels = model.labels_
+    cluster_profiles: list[dict] = []
+
+    for cid in range(actual_k):
+        member_indices = [i for i, lbl in enumerate(cluster_labels) if lbl == cid]
+        member_entries = [baseline[i] for i in member_indices]
+        member_texts = " ".join(e["text"] for e in member_entries).lower()
+
+        # Score cluster by how many high-risk anchors it contains
+        anchor_hits = [a for a in HIGH_RISK_ANCHORS if a in member_texts]
+        risk_score = len(anchor_hits) / max(len(HIGH_RISK_ANCHORS), 1)
+
+        # Extract top TF-IDF terms for this cluster
+        centroid = model.cluster_centers_[cid]
+        top_term_indices = centroid.argsort()[-8:][::-1]
+        top_terms = [str(feature_names[i]) for i in top_term_indices]
+
+        # Infer a cluster label from content
+        all_streets = []
+        all_times = []
+        all_activities = []
+        for entry in member_entries:
+            ents = entry.get("entities", {})
+            all_streets.extend(ents.get("streets", []))
+            all_streets.extend(ents.get("places", []))
+            all_times.extend(ents.get("times", []))
+            all_activities.extend(ents.get("activities", []))
+            tc = entry.get("time_context")
+            if tc and isinstance(tc, dict):
+                period = tc.get("period", "")
+                if period:
+                    all_times.append(period)
+
+        # Auto-name the cluster
+        top_location = Counter(all_streets).most_common(1)
+        top_time = Counter(all_times).most_common(1)
+        top_activity = Counter(all_activities).most_common(1)
+
+        name_parts = []
+        if top_time:
+            name_parts.append(top_time[0][0].title())
+        if top_location:
+            name_parts.append(top_location[0][0].title())
+        if top_activity:
+            name_parts.append(top_activity[0][0].title())
+        cluster_name = " ".join(name_parts) if name_parts else f"Routine {cid + 1}"
+
+        cluster_profiles.append({
+            "cluster_id": cid,
+            "name": cluster_name,
+            "size": len(member_indices),
+            "entry_ids": [baseline[i]["id"] for i in member_indices],
+            "risk_score": round(risk_score, 3),
+            "anchor_hits": anchor_hits[:6],
+            "top_terms": top_terms,
+        })
+
+    # ── Identify Target Cluster ──
+    target_cluster = max(cluster_profiles, key=lambda c: c["risk_score"])
+
+    # ── Prediction Step (.predict) ──
+    draft_cluster_id = int(model.predict(draft_vector)[0])
+    draft_cluster = cluster_profiles[draft_cluster_id]
+
+    # Distance from draft to each centroid (lower = closer match)
+    distances = model.transform(draft_vector)[0]
+    draft_distance = float(distances[draft_cluster_id])
+    max_distance = float(distances.max())
+    cluster_confidence = round(1.0 - (draft_distance / max(max_distance, 0.001)), 3)
+
+    # ── Threat Assessment ──
+    draft_hits_target = draft_cluster_id == target_cluster["cluster_id"]
+
+    return {
+        "n_clusters": actual_k,
+        "clusters": cluster_profiles,
+        "target_cluster": target_cluster,
+        "draft_cluster_id": draft_cluster_id,
+        "draft_cluster_name": draft_cluster["name"],
+        "draft_hits_target": draft_hits_target,
+        "cluster_confidence": cluster_confidence,
+        "target_risk_score": target_cluster["risk_score"],
+    }
+
+
 def build_exposure_map(
     new_entities: dict,
     ocr_entities: dict | None,
@@ -1264,8 +1408,66 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
     triplets = scan_entity_triplets(user_footprint, ocr_terms=ocr_terms)
     conclusion = generate_conclusion(triplets, vuln_map, static_landmarks, breach_probability)
 
+    # ── K-Means Routine Clustering ──
+    clustering = cluster_routines(user_footprint, merged)
+
+    # If clustering produced results, enhance breach probability and conclusion
+    if clustering and clustering["draft_hits_target"]:
+        # Boost breach probability when draft matches the target cluster
+        cluster_boost = clustering["cluster_confidence"] * 20.0
+        breach_probability = round(min(breach_probability + cluster_boost, 100.0), 1)
+
+        # Override conclusion with ML-enriched version
+        tc = clustering["target_cluster"]
+        conclusion = (
+            f"[SIGNAL DETECTED]: K-Means clustering mapped your Instagram history "
+            f"into {clustering['n_clusters']} distinct routines. Your draft post was "
+            f"predicted to belong to the \"{clustering['draft_cluster_name']}\" cluster "
+            f"with {clustering['cluster_confidence']*100:.0f}% confidence.\n\n"
+            f"[LEAK SOURCE]: This cluster contains {tc['size']} historical posts and "
+            f"scored the highest risk ({tc['risk_score']*100:.0f}%) due to anchors: "
+            f"{', '.join(tc['anchor_hits'][:5])}. "
+            f"Top terms: {', '.join(tc['top_terms'][:5])}.\n\n"
+            f"[FORECAST]: The AI mapped your behavior into {clustering['n_clusters']} "
+            f"distinct routines and predicted with high confidence that this draft "
+            f"exposes the highly sensitive \"{clustering['draft_cluster_name']}\" routine. "
+            f"A motivated adversary could use this pattern to predict your location "
+            f"and behavior. Recommendation: Remove identifying details before posting."
+        )
+    elif clustering:
+        # Draft didn't match the target cluster but we still have cluster data
+        conclusion = (
+            f"[SIGNAL DETECTED]: K-Means clustering identified "
+            f"{clustering['n_clusters']} behavioral routines in your footprint. "
+            f"Your draft was assigned to the \"{clustering['draft_cluster_name']}\" "
+            f"cluster ({clustering['cluster_confidence']*100:.0f}% confidence).\n\n"
+            f"[LEAK SOURCE]: {conclusion}\n\n"
+            f"[FORECAST]: Draft does not directly expose your highest-risk routine "
+            f"(\"{clustering['target_cluster']['name']}\"), but still reveals behavioral "
+            f"patterns. Exercise caution with location and time references."
+        )
+
     # Build graph
     web = build_exposure_map(new_entities, ocr_entities, metadata, category_sims, static_landmarks, user_footprint)
+
+    # Inject cluster_id into graph nodes
+    if clustering:
+        cluster_entry_map: dict[str, int] = {}
+        for cp in clustering["clusters"]:
+            for eid in cp["entry_ids"]:
+                cluster_entry_map[eid] = cp["cluster_id"]
+
+        for node in web["nodes"]:
+            nid = node["id"]
+            if nid in cluster_entry_map:
+                node["cluster_id"] = cluster_entry_map[nid]
+                node["cluster_name"] = next(
+                    (c["name"] for c in clustering["clusters"] if c["cluster_id"] == cluster_entry_map[nid]),
+                    None,
+                )
+            elif nid == "new_post":
+                node["cluster_id"] = clustering["draft_cluster_id"]
+                node["cluster_name"] = clustering["draft_cluster_name"]
 
     # Category similarity summaries
     cat_summaries = {}
@@ -1275,7 +1477,7 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
             top_sim = max(s["similarity"] for s in sims)
             cat_summaries[cat] = round(top_sim, 4)
 
-    return {
+    result = {
         "status": "analyzed",
         "detected_entities": {
             "streets": new_entities["streets"],
@@ -1301,3 +1503,26 @@ def analyze_threat(draft_text: str, image_bytes: bytes | None) -> dict:
         "web": web,
         "exposure_map": user_footprint.exposure_map_stats(),
     }
+
+    # Attach clustering metadata
+    if clustering:
+        result["clustering"] = {
+            "n_clusters": clustering["n_clusters"],
+            "draft_cluster_id": clustering["draft_cluster_id"],
+            "draft_cluster_name": clustering["draft_cluster_name"],
+            "draft_hits_target": clustering["draft_hits_target"],
+            "cluster_confidence": clustering["cluster_confidence"],
+            "clusters": [
+                {
+                    "id": c["cluster_id"],
+                    "name": c["name"],
+                    "size": c["size"],
+                    "risk_score": c["risk_score"],
+                    "top_terms": c["top_terms"],
+                    "is_target": c["cluster_id"] == clustering["target_cluster"]["cluster_id"],
+                }
+                for c in clustering["clusters"]
+            ],
+        }
+
+    return result
