@@ -133,7 +133,7 @@ export default function SimulateForm() {
           transition: "opacity 0.15s",
         }}
       >
-        {loading ? "Scanning..." : "Simulate"}
+        {loading ? "Scanning..." : "Simulate Threat"}
       </button>
 
       {/* Result */}

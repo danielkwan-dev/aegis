@@ -1,4 +1,3 @@
-import { UserProvider } from "@auth0/nextjs-auth0/client";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -23,7 +22,7 @@ export default function RootLayout({
           minHeight: "100vh",
         }}
       >
-        <UserProvider>{children}</UserProvider>
+        {children}
       </body>
     </html>
   );
