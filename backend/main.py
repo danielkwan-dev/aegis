@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from engine import analyze_threat, ingest_data_point, user_footprint
+from engine import analyze_threat, ingest_data_point, user_footprint, extract_entities, infer_time_context, merge_signals
 from instagram import scrape_instagram
 from demo import get_demo_sync_result, get_demo_analysis_result, DEMO_BASELINE_POSTS, DEMO_DRAFT_POST
 
@@ -110,6 +110,27 @@ async def sync_instagram(username: str = Form("")):
     if username.lower() == DEMO_USERNAME:
         # Preset demo account -- simulate processing time
         await asyncio.sleep(4)
+
+        # Populate the real footprint so analyze_threat works with any draft
+        user_footprint.clear()
+        for i, p in enumerate(DEMO_BASELINE_POSTS):
+            caption = p["caption"]
+            ocr_extra = ""
+            if i == 1:
+                # Post 2: OCR detected "Market St" from street sign in photo
+                ocr_extra = "Market St"
+            combined = f"{caption} {ocr_extra}".strip()
+            entities = extract_entities(combined)
+            time_ctx = infer_time_context({}, entities)
+            merged = merge_signals(caption, ocr_extra, "")
+            user_footprint.ingest(
+                text=merged,
+                entities=entities,
+                metadata=None,
+                time_context=time_ctx,
+                label=f"IG post {i + 1}",
+            )
+
         return get_demo_sync_result(username)
 
     # Live scrape for any other username
