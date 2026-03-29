@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+from datetime import datetime, timezone
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile
@@ -13,6 +14,10 @@ from demo import get_demo_sync_result, get_demo_analysis_result, DEMO_BASELINE_P
 DEMO_USERNAME = "aegis_yhack"
 
 load_dotenv()
+
+# ── jsonblob.com: cloud JSON store so Hex can read analysis data ──
+JSONBLOB_ID: str | None = os.getenv("JSONBLOB_ID", None)
+JSONBLOB_BASE = "https://jsonblob.com/api/jsonBlob"
 
 HEX_API_TOKEN = os.getenv("HEX_API_TOKEN", "")
 HEX_PROJECT_ID = os.getenv("HEX_PROJECT_ID", "")
@@ -97,8 +102,140 @@ def _build_geo_markers(analysis_result: dict) -> list[dict]:
     return markers
 
 
+def _build_risk_reductions(analysis_result: dict) -> list[dict]:
+    """Compute what-if risk reduction scenarios for the dashboard."""
+    breach_prob = analysis_result.get("breach_probability", 0)
+    detected = analysis_result.get("detected_entities", {})
+    cat_sim = analysis_result.get("category_similarity", {})
+    reductions = []
+
+    # Scenario: remove street names
+    if detected.get("streets"):
+        loc_sim = cat_sim.get("locations", 0)
+        drop = min(loc_sim * 45, 40)
+        reductions.append({
+            "action": "Remove street names",
+            "detail": f"Remove: {', '.join(detected['streets'])}",
+            "current_risk": round(breach_prob, 1),
+            "reduced_risk": round(max(breach_prob - drop, 5), 1),
+            "risk_drop": round(drop, 1),
+            "category": "location",
+        })
+
+    # Scenario: remove time references
+    if detected.get("times"):
+        time_sim = cat_sim.get("timestamps", 0)
+        drop = min(time_sim * 30, 25)
+        reductions.append({
+            "action": "Remove time references",
+            "detail": f"Remove: {', '.join(detected['times'])}",
+            "current_risk": round(breach_prob, 1),
+            "reduced_risk": round(max(breach_prob - drop, 5), 1),
+            "risk_drop": round(drop, 1),
+            "category": "temporal",
+        })
+
+    # Scenario: remove activity keywords
+    act_sim = cat_sim.get("activities", 0)
+    if act_sim > 0.1:
+        drop = min(act_sim * 20, 15)
+        reductions.append({
+            "action": "Remove activity keywords",
+            "detail": "Remove: coffee, routine, commute, gym, etc.",
+            "current_risk": round(breach_prob, 1),
+            "reduced_risk": round(max(breach_prob - drop, 5), 1),
+            "risk_drop": round(drop, 1),
+            "category": "activity",
+        })
+
+    # Scenario: apply ALL
+    total_drop = sum(r["risk_drop"] for r in reductions)
+    if reductions:
+        reductions.append({
+            "action": "Apply ALL recommendations",
+            "detail": "Remove all identified location, time, and activity leaks",
+            "current_risk": round(breach_prob, 1),
+            "reduced_risk": round(max(breach_prob - total_drop, 5), 1),
+            "risk_drop": round(total_drop, 1),
+            "category": "all",
+        })
+
+    return reductions
+
+
+async def _push_to_jsonblob(data: dict) -> None:
+    """Push data to jsonblob.com. Creates a new blob on first run, updates after."""
+    global JSONBLOB_ID
+
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            if JSONBLOB_ID:
+                resp = await client.put(
+                    f"{JSONBLOB_BASE}/{JSONBLOB_ID}",
+                    headers=headers,
+                    json=data,
+                )
+                if resp.status_code == 200:
+                    print(f"[Aegis] Updated jsonblob: {JSONBLOB_BASE}/{JSONBLOB_ID}")
+                    return
+                else:
+                    print(f"[Aegis] jsonblob update failed ({resp.status_code}), creating new blob")
+
+            resp = await client.post(JSONBLOB_BASE, headers=headers, json=data)
+            if resp.status_code == 201:
+                blob_url = resp.headers.get("Location", "")
+                new_id = blob_url.rsplit("/", 1)[-1] if blob_url else None
+                if new_id:
+                    JSONBLOB_ID = new_id
+                    print(f"[Aegis] Created jsonblob: {JSONBLOB_BASE}/{JSONBLOB_ID}")
+                    print(f"[Aegis] *** Save this in your .env: JSONBLOB_ID={JSONBLOB_ID}")
+                    print(f"[Aegis] *** Hex fetch URL: {JSONBLOB_BASE}/{JSONBLOB_ID}")
+            else:
+                print(f"[Aegis] jsonblob create failed: {resp.status_code} {resp.text[:200]}")
+    except Exception as e:
+        print(f"[Aegis] jsonblob error: {e}")
+
+
 async def trigger_hex_run(analysis_result: dict) -> dict | None:
-    """POST analysis data to Hex and return run metadata."""
+    """Build dashboard data, push to jsonblob, and trigger Hex run."""
+    geo_markers = _build_geo_markers(analysis_result)
+    risk_reductions = _build_risk_reductions(analysis_result)
+
+    # Severity counts for donut chart
+    vuln_map = analysis_result.get("vulnerability_map", [])
+    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for v in vuln_map:
+        sev = v.get("severity", "low")
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+    # Full dashboard payload
+    dashboard_data = {
+        "nodes": analysis_result.get("web", {}).get("nodes", []),
+        "edges": analysis_result.get("web", {}).get("edges", []),
+        "breach_probability": analysis_result.get("breach_probability", 0),
+        "vulnerability_map": vuln_map,
+        "clustering": analysis_result.get("clustering", {}),
+        "exposure_map": analysis_result.get("exposure_map", {}),
+        "final_conclusion": analysis_result.get("final_conclusion", ""),
+        "static_landmarks": analysis_result.get("static_landmarks", []),
+        "entity_triplets": analysis_result.get("entity_triplets", []),
+        "category_similarity": analysis_result.get("category_similarity", {}),
+        "detected_entities": analysis_result.get("detected_entities", {}),
+        "geo_markers": geo_markers,
+        "risk_reductions": risk_reductions,
+        "severity_counts": severity_counts,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    print(f"[Aegis] Dashboard data: {len(geo_markers)} geo markers, "
+          f"{len(risk_reductions)} recommendations, "
+          f"breach_prob={dashboard_data['breach_probability']}")
+
+    # Push to jsonblob so Hex can fetch it
+    await _push_to_jsonblob(dashboard_data)
+
     if not HEX_API_TOKEN or not HEX_PROJECT_ID:
         return None
 
@@ -107,24 +244,9 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
         "Content-Type": "application/json",
     }
 
-    geo_markers = _build_geo_markers(analysis_result)
-
     input_params = {}
     try:
-        input_params = {
-            "aegis_data": json.dumps({
-                "nodes": analysis_result.get("web", {}).get("nodes", []),
-                "edges": analysis_result.get("web", {}).get("edges", []),
-                "breach_probability": analysis_result.get("breach_probability", 0),
-                "vulnerability_map": analysis_result.get("vulnerability_map", []),
-                "clustering": analysis_result.get("clustering", {}),
-                "exposure_map": analysis_result.get("exposure_map", {}),
-                "final_conclusion": analysis_result.get("final_conclusion", ""),
-                "static_landmarks": analysis_result.get("static_landmarks", []),
-                "entity_triplets": analysis_result.get("entity_triplets", []),
-                "geo_markers": geo_markers,
-            }),
-        }
+        input_params = {"aegis_data": json.dumps(dashboard_data)}
     except Exception:
         input_params = {}
 
