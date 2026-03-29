@@ -1,4 +1,4 @@
-# AEGIS — Personal Privacy Intelligence Shield
+# Aegis — Personal Privacy Intelligence Shield
 ### YaleHack 2026 
 
 # Authors
