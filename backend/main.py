@@ -18,7 +18,7 @@ from engine import (
     merge_signals,
     user_footprint,
 )
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from instagram import scrape_instagram
 
@@ -308,21 +308,18 @@ async def _append_score_history(analysis_result: dict) -> list[dict]:
     return history
 
 
-async def trigger_hex_run(analysis_result: dict) -> dict | None:
-    """Build dashboard data, push to jsonblob, and trigger Hex run."""
-    global _latest_hex_run
+def _build_dashboard_data(analysis_result: dict) -> dict:
+    """Assemble the full payload that goes to jsonblob + Hex."""
     geo_markers = _build_geo_markers(analysis_result)
     risk_reductions = _build_risk_reductions(analysis_result)
 
-    # Severity counts for donut chart
     vuln_map = analysis_result.get("vulnerability_map", [])
     severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     for v in vuln_map:
         sev = v.get("severity", "low")
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
-    # Full dashboard payload
-    dashboard_data = {
+    return {
         "nodes": analysis_result.get("web", {}).get("nodes", []),
         "edges": analysis_result.get("web", {}).get("edges", []),
         "breach_probability": analysis_result.get("breach_probability", 0),
@@ -340,14 +337,10 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    print(
-        f"[Aegis] Dashboard data: {len(geo_markers)} geo markers, "
-        f"{len(risk_reductions)} recommendations, "
-        f"breach_prob={dashboard_data['breach_probability']}"
-    )
 
-    # Push to jsonblob so Hex can fetch it
-    await _push_to_jsonblob(dashboard_data)
+async def _call_hex_api(dashboard_data: dict) -> dict | None:
+    """POST to Hex API to trigger a new run. Returns run metadata or error dict."""
+    global _latest_hex_run
 
     if not HEX_API_TOKEN or not HEX_PROJECT_ID:
         return None
@@ -357,15 +350,10 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
         "Content-Type": "application/json",
     }
 
-    input_params = {}
     try:
-        input_params = {"aegis_data": json.dumps(dashboard_data)}
+        payload: dict = {"inputParams": {"aegis_data": json.dumps(dashboard_data)}}
     except Exception:
-        input_params = {}
-
-    payload: dict = {}
-    if input_params:
-        payload["inputParams"] = input_params
+        payload = {}
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -404,9 +392,59 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
         return err_result
 
 
+async def trigger_hex_run(analysis_result: dict) -> dict | None:
+    """Build dashboard data, then push to jsonblob AND call Hex API in parallel."""
+    global _latest_hex_run
+    dashboard_data = _build_dashboard_data(analysis_result)
+
+    print(
+        f"[Aegis] Dashboard data: {len(dashboard_data['geo_markers'])} geo markers, "
+        f"{len(dashboard_data['risk_reductions'])} recommendations, "
+        f"breach_prob={dashboard_data['breach_probability']}"
+    )
+
+    # Push to jsonblob and trigger Hex run concurrently — saves ~1-2 s
+    hex_result, _ = await asyncio.gather(
+        _call_hex_api(dashboard_data),
+        _push_to_jsonblob(dashboard_data),
+        return_exceptions=True,
+    )
+
+    if isinstance(hex_result, BaseException):
+        print(f"[Aegis] trigger_hex_run error: {hex_result}")
+        return {"error": str(hex_result), "appUrl": HEX_APP_BASE}
+
+    return hex_result
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/hex-latest")
+def get_hex_latest():
+    """Return the most recent Hex run metadata.
+
+    The frontend polls this every 2 s right after analysis completes,
+    until pending=False and a real runId is available, then switches
+    to the per-run status endpoint.
+    """
+    if _latest_hex_run:
+        return {
+            "pending": _latest_hex_run.get("pending", False),
+            "runId": _latest_hex_run.get("runId"),
+            "runUrl": _latest_hex_run.get("runUrl"),
+            "appUrl": _latest_hex_run.get("appUrl", HEX_APP_BASE),
+            "error": _latest_hex_run.get("error"),
+        }
+    return {
+        "pending": True,
+        "runId": None,
+        "runUrl": None,
+        "appUrl": HEX_APP_BASE,
+        "error": None,
+    }
 
 
 @app.get("/api/hex-url")
@@ -557,6 +595,7 @@ async def sync_instagram(username: str = Form("")):
 
 @app.post("/api/analyze-threat")
 async def analyze(
+    background_tasks: BackgroundTasks,
     text: str = Form(""),
     image: UploadFile | None = File(None),
 ):
@@ -571,11 +610,36 @@ async def analyze(
             image_bytes = await image.read()
         result = analyze_threat(draft_text=text, image_bytes=image_bytes)
 
-    # Trigger Hex run + append score history for all analyzed results
     if result.get("status") == "analyzed":
-        hex_result = await trigger_hex_run(result)
-        result["hex"] = hex_result
         result["risk_reductions"] = _build_risk_reductions(result)
-        result["score_history"] = await _append_score_history(result)
+
+        # Pre-build a run_id placeholder so the frontend can start polling immediately.
+        # The real run_id is filled in by the background task once Hex responds.
+        pending_run: dict = {
+            "runId": None,
+            "runUrl": None,
+            "appUrl": HEX_APP_BASE,
+            "pending": True,
+        }
+        _latest_hex_run = pending_run  # noqa: F841 — intentional module-level write
+        result["hex"] = pending_run
+
+        # Capture a snapshot for the background task (result dict may be mutated)
+        result_snapshot = dict(result)
+
+        async def _background(snap: dict) -> None:
+            global _latest_hex_run
+            # Run Hex trigger + score history append concurrently
+            hex_res, history = await asyncio.gather(
+                trigger_hex_run(snap),
+                _append_score_history(snap),
+                return_exceptions=True,
+            )
+            if not isinstance(hex_res, BaseException) and hex_res:
+                _latest_hex_run = hex_res
+            if not isinstance(history, BaseException):
+                pass  # history is persisted inside _append_score_history
+
+        background_tasks.add_task(_background, result_snapshot)
 
     return result

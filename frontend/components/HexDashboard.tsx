@@ -10,6 +10,94 @@ const API_URL =
     ? process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
     : "http://localhost:8000";
 
+/** Poll /api/hex-latest every 2 s until a real runId appears, then
+ *  switch to /api/hex-run-status/:runId every 3 s until COMPLETED. */
+async function* pollHexCompletion(signal: AbortSignal): AsyncGenerator<{
+  phase: "waiting" | "running" | "done" | "error";
+  runUrl?: string;
+  runId?: string;
+  statusMsg: string;
+}> {
+  // Phase 1 — wait for background task to give us a runId
+  let resolvedRunId: string | null = null;
+  let resolvedRunUrl: string | null = null;
+
+  while (!resolvedRunId && !signal.aborted) {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (signal.aborted) return;
+    try {
+      const res = await fetch(`${API_URL}/api/hex-latest`, { signal });
+      const data = await res.json();
+      if (data.runId) {
+        resolvedRunId = data.runId;
+        resolvedRunUrl = data.runUrl ?? null;
+        yield {
+          phase: "running",
+          runId: resolvedRunId!,
+          statusMsg: "Hex run queued — computing…",
+        };
+      } else if (data.error) {
+        yield { phase: "error", statusMsg: `Hex error: ${data.error}` };
+        return;
+      } else {
+        yield { phase: "waiting", statusMsg: "Waiting for Hex run to start…" };
+      }
+    } catch {
+      if (signal.aborted) return;
+      yield { phase: "waiting", statusMsg: "Waiting for Hex run…" };
+    }
+  }
+
+  // Phase 2 — poll run status until done
+  while (!signal.aborted) {
+    await new Promise((r) => setTimeout(r, 3000));
+    if (signal.aborted) return;
+    try {
+      const res = await fetch(
+        `${API_URL}/api/hex-run-status/${resolvedRunId}`,
+        { signal },
+      );
+      const data = await res.json();
+      const status: string = data.status ?? "UNKNOWN";
+
+      if (status === "COMPLETED") {
+        yield {
+          phase: "done",
+          runId: resolvedRunId!,
+          runUrl: data.runUrl ?? resolvedRunUrl ?? HEX_APP_URL,
+          statusMsg: "Complete",
+        };
+        return;
+      } else if (
+        status === "FAILED" ||
+        status === "KILLED" ||
+        status === "ERROR"
+      ) {
+        yield {
+          phase: "error",
+          runId: resolvedRunId!,
+          runUrl: resolvedRunUrl ?? HEX_APP_URL,
+          statusMsg: `Run ${status.toLowerCase()}`,
+        };
+        return;
+      } else {
+        yield {
+          phase: "running",
+          runId: resolvedRunId!,
+          statusMsg: `Hex status: ${status}`,
+        };
+      }
+    } catch {
+      if (signal.aborted) return;
+      yield {
+        phase: "running",
+        runId: resolvedRunId!,
+        statusMsg: "Checking Hex status…",
+      };
+    }
+  }
+}
+
 export interface HexDashboardProps {
   breachProbability?: number;
   username?: string;
@@ -108,100 +196,90 @@ function StatStrip(props: HexDashboardProps & { riskColor: string }) {
 }
 
 export default function HexDashboard(props: HexDashboardProps) {
-  const { defaultOpen = false, runId, runUrl: fallbackRunUrl } = props;
+  const { defaultOpen = false, runUrl: fallbackRunUrl } = props;
 
   const [open, setOpen] = useState(defaultOpen);
   const [phase, setPhase] = useState<RunPhase>("idle");
   const [liveRunUrl, setLiveRunUrl] = useState<string | null>(null);
+  const [liveRunId, setLiveRunId] = useState<string | null>(null);
   const [pollSeconds, setPollSeconds] = useState(0);
   const [iframeKey, setIframeKey] = useState(0);
   const [iframeVisible, setIframeVisible] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const prevRunId = useRef<string | null>(null);
+  // Track which breachProbability+username combo triggered the last poll
+  const prevTriggerRef = useRef<string>("");
 
   const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
+    abortRef.current?.abort();
+    abortRef.current = null;
     if (tickRef.current) {
       clearInterval(tickRef.current);
       tickRef.current = null;
     }
   }, []);
 
-  // Start polling whenever a new runId arrives
+  // Kick off two-phase polling whenever a new analysis result arrives
   useEffect(() => {
-    if (!runId || runId === prevRunId.current) return;
-    prevRunId.current = runId;
+    if (props.breachProbability === undefined) return;
 
-    // Reset state for new run
+    // Build a key so we only re-trigger when the result actually changes
+    const triggerKey = `${props.breachProbability}-${props.username ?? ""}-${props.totalDataPoints ?? ""}`;
+    if (triggerKey === prevTriggerRef.current) return;
+    prevTriggerRef.current = triggerKey;
+
+    // Reset
+    stopPolling();
     setPhase("polling");
     setLiveRunUrl(null);
+    setLiveRunId(null);
     setIframeVisible(false);
     setPollSeconds(0);
     setStatusMsg("Hex run triggered — waiting for results…");
     setOpen(true);
 
-    stopPolling();
+    const ac = new AbortController();
+    abortRef.current = ac;
 
-    // Tick counter so the user sees "Xm Ys elapsed"
-    tickRef.current = setInterval(() => {
-      setPollSeconds((s) => s + 1);
-    }, 1000);
+    // Elapsed timer
+    tickRef.current = setInterval(() => setPollSeconds((s) => s + 1), 1000);
 
-    // Poll /api/hex-run-status/:runId every 4 s
-    const doPoll = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/hex-run-status/${runId}`);
-        const data = await res.json();
-        const status: string = data.status ?? "UNKNOWN";
+    // Run the async generator
+    (async () => {
+      for await (const update of pollHexCompletion(ac.signal)) {
+        if (ac.signal.aborted) break;
 
-        setStatusMsg(`Hex run status: ${status}`);
+        setStatusMsg(update.statusMsg);
+        if (update.runId) setLiveRunId(update.runId);
 
-        if (status === "COMPLETED") {
-          stopPolling();
-          const url: string = data.runUrl || fallbackRunUrl || HEX_APP_URL;
+        if (update.phase === "done") {
+          const url = update.runUrl ?? fallbackRunUrl ?? HEX_APP_URL;
           setLiveRunUrl(url);
           setPhase("ready");
           setIframeKey((k) => k + 1);
-          setIframeVisible(false); // will fade in on iframe load
-        } else if (
-          status === "FAILED" ||
-          status === "KILLED" ||
-          status === "ERROR"
-        ) {
+          setIframeVisible(false);
           stopPolling();
-          // Fall back to the static app URL so something is still shown
-          setLiveRunUrl(fallbackRunUrl || HEX_APP_URL);
+        } else if (update.phase === "error") {
+          setLiveRunUrl(update.runUrl ?? fallbackRunUrl ?? HEX_APP_URL);
           setPhase("error");
           setIframeKey((k) => k + 1);
           setIframeVisible(false);
-          setStatusMsg(
-            `Run ${status.toLowerCase()} — showing last published version`,
-          );
+          stopPolling();
         }
-        // PENDING / RUNNING → keep polling
-      } catch {
-        // Network hiccup — keep trying
+        // "waiting" | "running" → keep going
       }
-    };
-
-    doPoll(); // immediate first check
-    pollRef.current = setInterval(doPoll, 4000);
+    })();
 
     return () => stopPolling();
-  }, [runId, fallbackRunUrl, stopPolling]);
-
-  // Auto-open when new results arrive even without a runId
-  useEffect(() => {
-    if (props.breachProbability !== undefined && !runId) {
-      setOpen(true);
-    }
-  }, [props.breachProbability, props.username, runId]);
+  }, [
+    props.breachProbability,
+    props.username,
+    props.totalDataPoints,
+    fallbackRunUrl,
+    stopPolling,
+  ]);
 
   // Cleanup on unmount
   useEffect(() => () => stopPolling(), [stopPolling]);
@@ -219,17 +297,6 @@ export default function HexDashboard(props: HexDashboardProps) {
       : (props.breachProbability ?? 0) >= 50
         ? "ELEVATED"
         : "NOMINAL";
-
-  // The URL the iframe should actually load
-  const iframeSrc = liveRunUrl ?? HEX_APP_URL;
-
-  // Elapsed time string
-  const elapsed =
-    pollSeconds > 0
-      ? pollSeconds < 60
-        ? `${pollSeconds}s`
-        : `${Math.floor(pollSeconds / 60)}m ${pollSeconds % 60}s`
-      : null;
 
   return (
     <div
@@ -348,11 +415,14 @@ export default function HexDashboard(props: HexDashboardProps) {
                   animation: "spin 0.9s linear infinite",
                 }}
               />
-              Computing{elapsed ? ` · ${elapsed}` : "…"}
+              Computing
+              {pollSeconds > 0
+                ? ` · ${pollSeconds < 60 ? `${pollSeconds}s` : `${Math.floor(pollSeconds / 60)}m ${pollSeconds % 60}s`}`
+                : "…"}
             </span>
           )}
 
-          {phase === "ready" && runId && (
+          {phase === "ready" && liveRunId && (
             <span
               style={{
                 fontSize: "0.55rem",
@@ -360,7 +430,7 @@ export default function HexDashboard(props: HexDashboardProps) {
                 letterSpacing: "0.06em",
               }}
             >
-              ✓ run #{runId.slice(0, 8)} complete
+              ✓ run #{liveRunId.slice(0, 8)} complete
             </span>
           )}
 
@@ -410,6 +480,7 @@ export default function HexDashboard(props: HexDashboardProps) {
 
           <a
             href={liveRunUrl ?? fallbackRunUrl ?? HEX_APP_URL}
+            title={liveRunId ? `Run ID: ${liveRunId}` : undefined}
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -516,9 +587,13 @@ export default function HexDashboard(props: HexDashboardProps) {
                 }}
               >
                 {statusMsg}
-                {elapsed && (
+                {pollSeconds > 0 && (
                   <span style={{ color: "#333", marginLeft: "0.5rem" }}>
-                    · {elapsed} elapsed
+                    ·{" "}
+                    {pollSeconds < 60
+                      ? `${pollSeconds}s`
+                      : `${Math.floor(pollSeconds / 60)}m ${pollSeconds % 60}s`}{" "}
+                    elapsed
                   </span>
                 )}
               </div>
@@ -606,7 +681,7 @@ export default function HexDashboard(props: HexDashboardProps) {
 
             <iframe
               key={iframeKey}
-              src={iframeSrc}
+              src={liveRunUrl ?? HEX_APP_URL}
               title="Aegis Hex Analytics Dashboard"
               width="100%"
               height="620"
