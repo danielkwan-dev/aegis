@@ -5,6 +5,7 @@ import RiskGauge from "./RiskGauge";
 import TypingEffect from "./TypingEffect";
 import DigitalShadow from "./DigitalShadow";
 import VisualizationWrapper from "./VisualizationWrapper";
+import ScoreTracker, { type ScoreEntry } from "./ScoreTracker";
 
 interface VulnFinding {
   category: string;
@@ -55,6 +56,7 @@ interface AnalysisResult {
     risk_drop: number;
     category: string;
   }[];
+  score_history?: ScoreEntry[];
 }
 
 interface AuditResultProps {
@@ -101,6 +103,9 @@ export default function AuditResult({ result }: AuditResultProps) {
 
   return (
     <div style={{ animation: "fadeInUp 0.5s ease-out" }}>
+      {/* Score Tracker — gamified history */}
+      {result.score_history && <ScoreTracker history={result.score_history} />}
+
       {/* Breach Report Header */}
       <div
         style={{
