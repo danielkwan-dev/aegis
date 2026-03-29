@@ -12,6 +12,8 @@ Aegis is a real-time OSINT and machine learning tool that detects **Identity Lin
 Individual posts are not the vulnerability. The statistical pattern across dozens of posts is.
 
 ---
+# Demo
+https://youtu.be/Nf_50lff9Rc
 
 ## The Problem
 
