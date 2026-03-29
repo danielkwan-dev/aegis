@@ -16,8 +16,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body style={{ position: "relative" }}>
-        <MatrixRain side="left" width={130} />
-        <MatrixRain side="right" width={130} />
+        <MatrixRain side="left" width={220} />
+        <MatrixRain side="right" width={220} />
         <div style={{ position: "relative", zIndex: 1 }}>{children}</div>
       </body>
     </html>

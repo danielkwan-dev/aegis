@@ -10,7 +10,7 @@ interface MatrixRainProps {
   width?: number;
 }
 
-export default function MatrixRain({ side, width = 120 }: MatrixRainProps) {
+export default function MatrixRain({ side, width = 200 }: MatrixRainProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -30,11 +30,17 @@ export default function MatrixRain({ side, width = 120 }: MatrixRainProps) {
     window.addEventListener("resize", resize);
 
     const cols = Math.floor(width / fontSize);
-    const drops: number[] = Array(cols).fill(0).map(() => Math.random() * -80);
+    const drops: number[] = Array(cols)
+      .fill(0)
+      .map(() => Math.random() * -80);
     // Per-column opacity so columns feel independent
-    const opacities: number[] = Array(cols).fill(0).map(() => 0.3 + Math.random() * 0.5);
+    const opacities: number[] = Array(cols)
+      .fill(0)
+      .map(() => 0.55 + Math.random() * 0.45);
     // Per-column speed multiplier
-    const speeds: number[] = Array(cols).fill(0).map(() => 0.3 + Math.random() * 0.7);
+    const speeds: number[] = Array(cols)
+      .fill(0)
+      .map(() => 0.3 + Math.random() * 0.7);
 
     let frame = 0;
 
@@ -42,7 +48,7 @@ export default function MatrixRain({ side, width = 120 }: MatrixRainProps) {
       frame++;
 
       // Fade trail
-      ctx.fillStyle = "rgba(8, 9, 10, 0.18)";
+      ctx.fillStyle = "rgba(8, 9, 10, 0.14)";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       ctx.font = `${fontSize}px 'SF Mono', 'Fira Code', monospace`;
@@ -61,18 +67,18 @@ export default function MatrixRain({ side, width = 120 }: MatrixRainProps) {
 
         // Glow on head
         ctx.shadowColor = "#06b6d4";
-        ctx.shadowBlur = 6;
-        ctx.fillStyle = `rgba(180, 240, 255, ${opacities[i]})`;
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = `rgba(200, 245, 255, ${opacities[i]})`;
         ctx.fillText(headChar, x, y);
         ctx.shadowBlur = 0;
 
         // Occasional green column instead of cyan for variety
         const colColor =
           i % 5 === 0
-            ? `rgba(22, 163, 74, ${opacities[i] * 0.7})`  // green
+            ? `rgba(22, 163, 74, ${opacities[i] * 0.9})` // green
             : i % 7 === 0
-            ? `rgba(220, 38, 38, ${opacities[i] * 0.4})`  // dim red
-            : `rgba(6, 182, 212, ${opacities[i] * 0.55})`; // cyan
+              ? `rgba(220, 38, 38, ${opacities[i] * 0.6})` // dim red
+              : `rgba(6, 182, 212, ${opacities[i] * 0.75})`; // cyan
 
         // Body character (slightly behind head)
         if (drops[i] > 1) {
@@ -113,15 +119,15 @@ export default function MatrixRain({ side, width = 120 }: MatrixRainProps) {
         height: "100vh",
         pointerEvents: "none",
         zIndex: 0,
-        opacity: 0.45,
+        opacity: 0.75,
         maskImage:
           side === "left"
-            ? "linear-gradient(to right, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.3) 70%, transparent 100%)"
-            : "linear-gradient(to left, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.3) 70%, transparent 100%)",
+            ? "linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)"
+            : "linear-gradient(to left, rgba(0,0,0,1) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
         WebkitMaskImage:
           side === "left"
-            ? "linear-gradient(to right, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.3) 70%, transparent 100%)"
-            : "linear-gradient(to left, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.3) 70%, transparent 100%)",
+            ? "linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)"
+            : "linear-gradient(to left, rgba(0,0,0,1) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
       }}
     />
   );
