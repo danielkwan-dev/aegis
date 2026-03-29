@@ -411,11 +411,7 @@ def health():
 
 @app.get("/api/hex-url")
 def get_hex_url():
-    """Return the Hex dashboard URL and the most recent run info.
-
-    The frontend polls this so the 'Open in Hex' button always points at the
-    latest triggered run rather than the generic app URL.
-    """
+    """Return the Hex dashboard URL and the most recent run info."""
     if _latest_hex_run:
         return {
             "appUrl": HEX_APP_BASE,
@@ -433,6 +429,50 @@ def get_hex_url():
         "projectId": HEX_PROJECT_ID or None,
         "error": None,
     }
+
+
+@app.get("/api/hex-run-status/{run_id}")
+async def get_hex_run_status(run_id: str):
+    """Poll Hex API for the status of a specific run.
+
+    Returns status: PENDING | RUNNING | COMPLETED | FAILED | KILLED
+    and the runUrl once completed so the frontend can reload the iframe.
+    """
+    if not HEX_API_TOKEN or not HEX_PROJECT_ID:
+        return {
+            "status": "UNAVAILABLE",
+            "runUrl": None,
+            "error": "No Hex credentials configured",
+        }
+
+    status_url = f"https://app.hex.tech/api/v1/projects/{HEX_PROJECT_ID}/runs/{run_id}"
+    headers = {
+        "Authorization": f"Bearer {HEX_API_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(status_url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            run_status = data.get("status", "UNKNOWN")
+            run_url = data.get("runUrl") or (_latest_hex_run or {}).get("runUrl")
+            return {
+                "status": run_status,
+                "runUrl": run_url,
+                "runId": run_id,
+                "elapsedTime": data.get("elapsedTime"),
+            }
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:300] if e.response else ""
+        return {
+            "status": "ERROR",
+            "runUrl": None,
+            "error": f"{e.response.status_code}: {body}",
+        }
+    except Exception as e:
+        return {"status": "ERROR", "runUrl": None, "error": str(e)}
 
 
 @app.get("/api/score-history")

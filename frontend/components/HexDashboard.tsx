@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 const HEX_APP_URL =
   "https://app.hex.tech/019d3274-b978-7110-8122-c30aea21a224/app/Aegis-032pYjM1wOXFrsi6nXOwag/latest";
+
+const API_URL =
+  typeof window !== "undefined"
+    ? process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+    : "http://localhost:8000";
 
 export interface HexDashboardProps {
   breachProbability?: number;
@@ -18,81 +23,213 @@ export interface HexDashboardProps {
   mediumCount?: number;
   lowCount?: number;
   finalConclusion?: string;
-  runUrl?: string | null;
+  /** runId returned by the backend after triggering a Hex run */
   runId?: string | null;
-  /** If true, show the panel expanded by default */
+  /** runUrl returned by the backend (used as fallback) */
+  runUrl?: string | null;
   defaultOpen?: boolean;
 }
 
-function buildHexUrl(props: HexDashboardProps): string {
-  const params = new URLSearchParams();
+type RunPhase =
+  | "idle" // no run triggered yet
+  | "polling" // waiting for Hex run to complete
+  | "ready" // run completed, iframe loaded with live URL
+  | "error" // run failed or API error
+  | "blocked"; // iframe loaded but XFO blocked it
 
-  if (props.breachProbability !== undefined)
-    params.set("breach_probability", String(Math.round(props.breachProbability)));
-  if (props.username) params.set("username", props.username);
-  if (props.totalDataPoints !== undefined)
-    params.set("total_data_points", String(props.totalDataPoints));
-  if (props.uniqueStreets !== undefined)
-    params.set("unique_streets", String(props.uniqueStreets));
-  if (props.knownLocations !== undefined)
-    params.set("known_locations", String(props.knownLocations));
-  if (props.trackedActivities !== undefined)
-    params.set("tracked_activities", String(props.trackedActivities));
-  if (props.dayPatterns !== undefined)
-    params.set("day_patterns", String(props.dayPatterns));
-  if (props.criticalCount !== undefined)
-    params.set("critical_count", String(props.criticalCount));
-  if (props.highCount !== undefined)
-    params.set("high_count", String(props.highCount));
-  if (props.mediumCount !== undefined)
-    params.set("medium_count", String(props.mediumCount));
-  if (props.lowCount !== undefined)
-    params.set("low_count", String(props.lowCount));
-
-  const query = params.toString();
-  return query ? `${HEX_APP_URL}?${query}` : HEX_APP_URL;
+function StatStrip(props: HexDashboardProps & { riskColor: string }) {
+  const { breachProbability, riskColor } = props;
+  if (breachProbability === undefined) return null;
+  const stats = [
+    {
+      label: "Breach Risk",
+      value: `${Math.round(breachProbability)}%`,
+      color: riskColor,
+    },
+    {
+      label: "Data Points",
+      value: props.totalDataPoints ?? "—",
+      color: "#c8ccd0",
+    },
+    { label: "Streets", value: props.uniqueStreets ?? "—", color: "#c8ccd0" },
+    {
+      label: "Locations",
+      value: props.knownLocations ?? "—",
+      color: "#c8ccd0",
+    },
+    {
+      label: "Activities",
+      value: props.trackedActivities ?? "—",
+      color: "#c8ccd0",
+    },
+    { label: "Critical", value: props.criticalCount ?? 0, color: "#dc2626" },
+    { label: "High", value: props.highCount ?? 0, color: "#f59e0b" },
+    { label: "Medium", value: props.mediumCount ?? 0, color: "#eab308" },
+    { label: "Low", value: props.lowCount ?? 0, color: "#4ade80" },
+  ];
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: "1.5rem",
+        padding: "0.6rem 1.25rem",
+        backgroundColor: "#0d1117",
+        borderBottom: "1px solid #1a1a1a",
+        overflowX: "auto",
+      }}
+    >
+      {stats.map((s) => (
+        <div key={s.label} style={{ flexShrink: 0 }}>
+          <div
+            style={{
+              color: "#444",
+              fontSize: "0.5rem",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              marginBottom: "0.15rem",
+            }}
+          >
+            {s.label}
+          </div>
+          <div
+            style={{
+              color: s.color,
+              fontSize: "0.95rem",
+              fontWeight: 700,
+              lineHeight: 1,
+            }}
+          >
+            {s.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function HexDashboard(props: HexDashboardProps) {
-  const { defaultOpen = false, runUrl, runId } = props;
+  const { defaultOpen = false, runId, runUrl: fallbackRunUrl } = props;
+
   const [open, setOpen] = useState(defaultOpen);
+  const [phase, setPhase] = useState<RunPhase>("idle");
+  const [liveRunUrl, setLiveRunUrl] = useState<string | null>(null);
+  const [pollSeconds, setPollSeconds] = useState(0);
   const [iframeKey, setIframeKey] = useState(0);
-  const [iframeLoaded, setIframeLoaded] = useState(false);
-  const [iframeError, setIframeError] = useState(false);
-  const prevUrlRef = useRef<string>("");
+  const [iframeVisible, setIframeVisible] = useState(false);
+  const [statusMsg, setStatusMsg] = useState("");
 
-  const hexUrl = buildHexUrl(props);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevRunId = useRef<string | null>(null);
 
-  // Re-mount iframe whenever the key data changes
-  useEffect(() => {
-    if (hexUrl !== prevUrlRef.current) {
-      prevUrlRef.current = hexUrl;
-      setIframeKey((k) => k + 1);
-      setIframeLoaded(false);
-      setIframeError(false);
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
     }
-  }, [hexUrl]);
+    if (tickRef.current) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+  }, []);
 
-  // Auto-open when new results arrive
+  // Start polling whenever a new runId arrives
   useEffect(() => {
-    if (props.breachProbability !== undefined) {
+    if (!runId || runId === prevRunId.current) return;
+    prevRunId.current = runId;
+
+    // Reset state for new run
+    setPhase("polling");
+    setLiveRunUrl(null);
+    setIframeVisible(false);
+    setPollSeconds(0);
+    setStatusMsg("Hex run triggered — waiting for results…");
+    setOpen(true);
+
+    stopPolling();
+
+    // Tick counter so the user sees "Xm Ys elapsed"
+    tickRef.current = setInterval(() => {
+      setPollSeconds((s) => s + 1);
+    }, 1000);
+
+    // Poll /api/hex-run-status/:runId every 4 s
+    const doPoll = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/hex-run-status/${runId}`);
+        const data = await res.json();
+        const status: string = data.status ?? "UNKNOWN";
+
+        setStatusMsg(`Hex run status: ${status}`);
+
+        if (status === "COMPLETED") {
+          stopPolling();
+          const url: string = data.runUrl || fallbackRunUrl || HEX_APP_URL;
+          setLiveRunUrl(url);
+          setPhase("ready");
+          setIframeKey((k) => k + 1);
+          setIframeVisible(false); // will fade in on iframe load
+        } else if (
+          status === "FAILED" ||
+          status === "KILLED" ||
+          status === "ERROR"
+        ) {
+          stopPolling();
+          // Fall back to the static app URL so something is still shown
+          setLiveRunUrl(fallbackRunUrl || HEX_APP_URL);
+          setPhase("error");
+          setIframeKey((k) => k + 1);
+          setIframeVisible(false);
+          setStatusMsg(
+            `Run ${status.toLowerCase()} — showing last published version`,
+          );
+        }
+        // PENDING / RUNNING → keep polling
+      } catch {
+        // Network hiccup — keep trying
+      }
+    };
+
+    doPoll(); // immediate first check
+    pollRef.current = setInterval(doPoll, 4000);
+
+    return () => stopPolling();
+  }, [runId, fallbackRunUrl, stopPolling]);
+
+  // Auto-open when new results arrive even without a runId
+  useEffect(() => {
+    if (props.breachProbability !== undefined && !runId) {
       setOpen(true);
     }
-  }, [props.breachProbability, props.username]);
+  }, [props.breachProbability, props.username, runId]);
+
+  // Cleanup on unmount
+  useEffect(() => () => stopPolling(), [stopPolling]);
 
   const riskColor =
     (props.breachProbability ?? 0) >= 80
       ? "#dc2626"
       : (props.breachProbability ?? 0) >= 50
-      ? "#f59e0b"
-      : "#16a34a";
+        ? "#f59e0b"
+        : "#16a34a";
 
   const riskLabel =
     (props.breachProbability ?? 0) >= 80
       ? "CRITICAL"
       : (props.breachProbability ?? 0) >= 50
-      ? "ELEVATED"
-      : "NOMINAL";
+        ? "ELEVATED"
+        : "NOMINAL";
+
+  // The URL the iframe should actually load
+  const iframeSrc = liveRunUrl ?? HEX_APP_URL;
+
+  // Elapsed time string
+  const elapsed =
+    pollSeconds > 0
+      ? pollSeconds < 60
+        ? `${pollSeconds}s`
+        : `${Math.floor(pollSeconds / 60)}m ${pollSeconds % 60}s`
+      : null;
 
   return (
     <div
@@ -105,7 +242,7 @@ export default function HexDashboard(props: HexDashboardProps) {
         backgroundColor: "#0a0d12",
       }}
     >
-      {/* ── Header / toggle bar ── */}
+      {/* ── Header bar ── */}
       <div
         onClick={() => setOpen((o) => !o)}
         style={{
@@ -120,19 +257,44 @@ export default function HexDashboard(props: HexDashboardProps) {
           borderBottom: open ? "1px solid #06b6d415" : "none",
         }}
       >
-        {/* Left: icon + title */}
-        <div style={{ display: "flex", alignItems: "center", gap: "0.65rem" }}>
+        {/* Left */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.65rem",
+            flexWrap: "wrap",
+          }}
+        >
+          {/* Status dot */}
           <div
             style={{
               width: 8,
               height: 8,
               borderRadius: "50%",
-              backgroundColor: "#06b6d4",
-              boxShadow: open ? "0 0 8px rgba(6,182,212,0.6)" : "none",
-              transition: "box-shadow 0.3s ease",
               flexShrink: 0,
+              backgroundColor:
+                phase === "polling"
+                  ? "#f59e0b"
+                  : phase === "ready"
+                    ? "#16a34a"
+                    : phase === "error"
+                      ? "#dc2626"
+                      : "#06b6d4",
+              boxShadow:
+                phase === "polling"
+                  ? "0 0 8px rgba(245,158,11,0.7)"
+                  : open
+                    ? "0 0 8px rgba(6,182,212,0.6)"
+                    : "none",
+              animation:
+                phase === "polling"
+                  ? "hexPulse 1.2s ease-in-out infinite"
+                  : "none",
+              transition: "background-color 0.3s ease, box-shadow 0.3s ease",
             }}
           />
+
           <span
             style={{
               fontSize: "0.65rem",
@@ -145,6 +307,7 @@ export default function HexDashboard(props: HexDashboardProps) {
             Hex Analytics Dashboard
           </span>
 
+          {/* Risk badge */}
           {props.breachProbability !== undefined && (
             <span
               style={{
@@ -162,7 +325,34 @@ export default function HexDashboard(props: HexDashboardProps) {
             </span>
           )}
 
-          {runId && (
+          {/* Phase badge */}
+          {phase === "polling" && (
+            <span
+              style={{
+                fontSize: "0.55rem",
+                color: "#f59e0b",
+                letterSpacing: "0.06em",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.3rem",
+              }}
+            >
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  border: "1px solid #f59e0b80",
+                  borderTop: "1px solid #f59e0b",
+                  borderRadius: "50%",
+                  animation: "spin 0.9s linear infinite",
+                }}
+              />
+              Computing{elapsed ? ` · ${elapsed}` : "…"}
+            </span>
+          )}
+
+          {phase === "ready" && runId && (
             <span
               style={{
                 fontSize: "0.55rem",
@@ -170,24 +360,34 @@ export default function HexDashboard(props: HexDashboardProps) {
                 letterSpacing: "0.06em",
               }}
             >
-              run #{runId.slice(0, 8)}
+              ✓ run #{runId.slice(0, 8)} complete
+            </span>
+          )}
+
+          {phase === "error" && (
+            <span
+              style={{
+                fontSize: "0.55rem",
+                color: "#dc2626",
+                letterSpacing: "0.06em",
+              }}
+            >
+              Run failed · showing last version
             </span>
           )}
         </div>
 
-        {/* Right: action buttons + chevron */}
+        {/* Right */}
         <div
           style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Refresh iframe */}
-          {open && (
+          {open && phase !== "polling" && (
             <button
               title="Reload dashboard"
               onClick={() => {
                 setIframeKey((k) => k + 1);
-                setIframeLoaded(false);
-                setIframeError(false);
+                setIframeVisible(false);
               }}
               style={{
                 padding: "0.25rem 0.6rem",
@@ -208,9 +408,8 @@ export default function HexDashboard(props: HexDashboardProps) {
             </button>
           )}
 
-          {/* Open in Hex (new tab) */}
           <a
-            href={runUrl ?? hexUrl}
+            href={liveRunUrl ?? fallbackRunUrl ?? HEX_APP_URL}
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -233,7 +432,6 @@ export default function HexDashboard(props: HexDashboardProps) {
             ↗ Open in Hex
           </a>
 
-          {/* Chevron */}
           <span
             onClick={() => setOpen((o) => !o)}
             style={{
@@ -250,202 +448,215 @@ export default function HexDashboard(props: HexDashboardProps) {
         </div>
       </div>
 
-      {/* ── Collapsible body ── */}
+      {/* ── Body ── */}
       <div
         style={{
-          maxHeight: open ? "700px" : "0px",
+          maxHeight: open ? "760px" : "0px",
           overflow: "hidden",
           transition: "max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
         }}
       >
-        {/* Stats strip (visible above iframe) */}
-        {props.breachProbability !== undefined && (
+        <StatStrip {...props} riskColor={riskColor} />
+
+        {/* Polling state — full-height waiting screen */}
+        {phase === "polling" && (
           <div
             style={{
+              height: 480,
               display: "flex",
-              gap: "1.5rem",
-              padding: "0.6rem 1.25rem",
-              backgroundColor: "#0d1117",
-              borderBottom: "1px solid #1a1a1a",
-              overflowX: "auto",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "1.25rem",
+              backgroundColor: "#0a0d12",
             }}
           >
-            {[
-              { label: "Breach Risk", value: `${Math.round(props.breachProbability)}%`, color: riskColor },
-              { label: "Data Points", value: props.totalDataPoints ?? "—", color: "#c8ccd0" },
-              { label: "Streets", value: props.uniqueStreets ?? "—", color: "#c8ccd0" },
-              { label: "Locations", value: props.knownLocations ?? "—", color: "#c8ccd0" },
-              { label: "Activities", value: props.trackedActivities ?? "—", color: "#c8ccd0" },
-              { label: "Critical", value: props.criticalCount ?? 0, color: "#dc2626" },
-              { label: "High", value: props.highCount ?? 0, color: "#f59e0b" },
-              { label: "Medium", value: props.mediumCount ?? 0, color: "#eab308" },
-              { label: "Low", value: props.lowCount ?? 0, color: "#4ade80" },
-            ].map((stat) => (
-              <div key={stat.label} style={{ flexShrink: 0 }}>
-                <div
-                  style={{
-                    color: "#444",
-                    fontSize: "0.5rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.08em",
-                    marginBottom: "0.15rem",
-                  }}
-                >
-                  {stat.label}
-                </div>
-                <div
-                  style={{
-                    color: stat.color,
-                    fontSize: "0.95rem",
-                    fontWeight: 700,
-                    lineHeight: 1,
-                  }}
-                >
-                  {stat.value}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* iframe wrapper */}
-        <div style={{ position: "relative", width: "100%", height: 620 }}>
-          {/* Loading overlay */}
-          {!iframeLoaded && !iframeError && (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "#0a0d12",
-                gap: "1rem",
-                zIndex: 2,
-              }}
-            >
+            {/* Animated ring */}
+            <div style={{ position: "relative", width: 52, height: 52 }}>
               <div
                 style={{
-                  width: 32,
-                  height: 32,
-                  border: "2px solid #06b6d420",
+                  position: "absolute",
+                  inset: 0,
+                  border: "2px solid #06b6d410",
                   borderTop: "2px solid #06b6d4",
                   borderRadius: "50%",
-                  animation: "spin 0.9s linear infinite",
+                  animation: "spin 1s linear infinite",
                 }}
               />
-              <span
+              <div
                 style={{
-                  fontSize: "0.68rem",
-                  color: "#444",
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
+                  position: "absolute",
+                  inset: 8,
+                  border: "2px solid #f59e0b10",
+                  borderTop: "2px solid #f59e0b",
+                  borderRadius: "50%",
+                  animation: "spin 1.6s linear infinite reverse",
                 }}
-              >
-                Loading Hex dashboard…
-              </span>
+              />
             </div>
-          )}
 
-          {/* Error / blocked state */}
-          {iframeError && (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "#0a0d12",
-                gap: "1rem",
-                zIndex: 2,
-                padding: "2rem",
-                textAlign: "center",
-              }}
-            >
-              <div style={{ fontSize: "1.5rem" }}>📊</div>
+            <div style={{ textAlign: "center" }}>
               <div
                 style={{
                   fontSize: "0.72rem",
-                  color: "#555",
-                  letterSpacing: "0.06em",
-                  lineHeight: 1.6,
-                  maxWidth: 340,
-                }}
-              >
-                Hex prevents direct embedding via iframe (X-Frame-Options). Use the button
-                below to open your live dashboard in a new tab — it will reflect the latest
-                analysis data automatically.
-              </div>
-              <a
-                href={runUrl ?? hexUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  marginTop: "0.5rem",
-                  padding: "0.55rem 1.4rem",
-                  backgroundColor: "#06b6d420",
-                  border: "1px solid #06b6d450",
-                  borderRadius: "6px",
-                  color: "#06b6d4",
-                  fontSize: "0.75rem",
                   fontWeight: 600,
-                  letterSpacing: "0.06em",
-                  textDecoration: "none",
-                  cursor: "pointer",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  color: "#06b6d4",
+                  marginBottom: "0.4rem",
                 }}
               >
-                ↗ Open Hex Dashboard
-              </a>
-              {props.finalConclusion && (
-                <p
+                Hex is recomputing your dashboard
+              </div>
+              <div
+                style={{
+                  fontSize: "0.65rem",
+                  color: "#444",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                {statusMsg}
+                {elapsed && (
+                  <span style={{ color: "#333", marginLeft: "0.5rem" }}>
+                    · {elapsed} elapsed
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Progress dots */}
+            <div style={{ display: "flex", gap: "0.4rem" }}>
+              {[0, 1, 2, 3].map((i) => (
+                <div
+                  key={i}
                   style={{
-                    marginTop: "0.75rem",
+                    width: 5,
+                    height: 5,
+                    borderRadius: "50%",
+                    backgroundColor: "#06b6d4",
+                    animation: `bounceDot 1.4s ease-in-out ${i * 0.18}s infinite`,
+                  }}
+                />
+              ))}
+            </div>
+
+            <a
+              href={fallbackRunUrl ?? HEX_APP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                marginTop: "0.5rem",
+                padding: "0.35rem 1rem",
+                backgroundColor: "#06b6d410",
+                border: "1px solid #06b6d425",
+                borderRadius: "5px",
+                color: "#06b6d480",
+                fontSize: "0.62rem",
+                letterSpacing: "0.05em",
+                textDecoration: "none",
+              }}
+            >
+              Open last version while waiting ↗
+            </a>
+          </div>
+        )}
+
+        {/* iframe — shown when ready or error (both load a URL) */}
+        {(phase === "ready" || phase === "error" || phase === "idle") && (
+          <div style={{ position: "relative", width: "100%", height: 620 }}>
+            {/* Loading overlay — shown until iframe fires onLoad */}
+            {!iframeVisible && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "#0a0d12",
+                  gap: "1rem",
+                  zIndex: 2,
+                }}
+              >
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    border: "2px solid #06b6d420",
+                    borderTop: "2px solid #06b6d4",
+                    borderRadius: "50%",
+                    animation: "spin 0.9s linear infinite",
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: "0.65rem",
                     color: "#444",
-                    fontSize: "0.7rem",
-                    lineHeight: 1.5,
-                    maxWidth: 380,
-                    fontStyle: "italic",
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
                   }}
                 >
-                  "{props.finalConclusion.slice(0, 180)}
-                  {props.finalConclusion.length > 180 ? "…" : ""}"
-                </p>
-              )}
-            </div>
-          )}
+                  {phase === "ready"
+                    ? "Loading updated dashboard…"
+                    : "Loading Hex dashboard…"}
+                </span>
+              </div>
+            )}
 
-          <iframe
-            key={iframeKey}
-            src={hexUrl}
-            title="Aegis Hex Analytics Dashboard"
-            width="100%"
-            height="620"
-            style={{
-              border: "none",
-              display: "block",
-              opacity: iframeLoaded ? 1 : 0,
-              transition: "opacity 0.4s ease",
-            }}
-            allow="fullscreen"
-            onLoad={() => {
-              // Detect X-Frame-Options block: contentDocument will be inaccessible
-              // but the load event still fires — we use a short timer + try/catch
-              try {
-                setIframeLoaded(true);
-                setIframeError(false);
-              } catch {
-                setIframeError(true);
-              }
-            }}
-            onError={() => {
-              setIframeLoaded(false);
-              setIframeError(true);
-            }}
-          />
-        </div>
+            <iframe
+              key={iframeKey}
+              src={iframeSrc}
+              title="Aegis Hex Analytics Dashboard"
+              width="100%"
+              height="620"
+              style={{
+                border: "none",
+                display: "block",
+                opacity: iframeVisible ? 1 : 0,
+                transition: "opacity 0.5s ease",
+              }}
+              allow="fullscreen"
+              onLoad={() => setIframeVisible(true)}
+              onError={() => setIframeVisible(false)}
+            />
+
+            {/* XFO-blocked overlay — shown when iframe loaded */}
+            {iframeVisible && (
+              <div
+                id="hex-xfo-hint"
+                style={{
+                  position: "absolute",
+                  bottom: "1rem",
+                  right: "1rem",
+                  zIndex: 10,
+                }}
+              >
+                <a
+                  href={liveRunUrl ?? fallbackRunUrl ?? HEX_APP_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                    padding: "0.4rem 0.9rem",
+                    backgroundColor: "#06b6d4",
+                    borderRadius: "5px",
+                    color: "#000",
+                    fontSize: "0.68rem",
+                    fontWeight: 700,
+                    letterSpacing: "0.05em",
+                    textDecoration: "none",
+                    boxShadow: "0 2px 12px rgba(6,182,212,0.4)",
+                  }}
+                >
+                  ↗ Open in Hex
+                </a>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Footer */}
         <div
@@ -465,7 +676,7 @@ export default function HexDashboard(props: HexDashboardProps) {
               textTransform: "uppercase",
             }}
           >
-            Powered by Hex · Data updates on each analysis run
+            Powered by Hex · Updates on every analysis run
           </span>
           <a
             href={HEX_APP_URL}
@@ -483,10 +694,17 @@ export default function HexDashboard(props: HexDashboardProps) {
         </div>
       </div>
 
-      {/* Global keyframe for spinner */}
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
+        }
+        @keyframes hexPulse {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.3; }
+        }
+        @keyframes bounceDot {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.3; }
+          40%            { transform: translateY(-6px); opacity: 1; }
         }
       `}</style>
     </div>
