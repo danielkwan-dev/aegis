@@ -47,6 +47,14 @@ interface AnalysisResult {
     projectId?: string;
     error?: string;
   } | null;
+  risk_reductions?: {
+    action: string;
+    detail: string;
+    current_risk: number;
+    reduced_risk: number;
+    risk_drop: number;
+    category: string;
+  }[];
 }
 
 interface AuditResultProps {
@@ -421,8 +429,8 @@ export default function AuditResult({ result }: AuditResultProps) {
         </motion.div>
       )}
 
-      {/* Stalker's Web + Hex */}
-      <VisualizationWrapper web={result.web} hex={result.hex} />
+      {/* Stalker's Web + Privacy Improvements */}
+      <VisualizationWrapper web={result.web} improvements={result.risk_reductions} />
 
       {/* Signals: OCR + EXIF */}
       {result.signals.ocr_text && (
