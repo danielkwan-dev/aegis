@@ -1,4 +1,4 @@
-# AEGIS — Personal Privacy Intelligence Engine
+# AEGIS — Personal Privacy Intelligence Shield
 ### YaleHack 2026 · Solo Project by Daniel Kwan
 
 > "We don't need to hack your phone. We just need to read your Instagram."
