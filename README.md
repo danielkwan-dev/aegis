@@ -1,5 +1,5 @@
-# 🛡️ AEGIS — Personal Privacy Intelligence Engine
-### YaleHack 2026 &nbsp;·&nbsp; Solo Project by Daniel Kwan
+# AEGIS — Personal Privacy Intelligence Engine
+### YaleHack 2026 · Solo Project by Daniel Kwan
 
 > *"We don't need to hack your phone. We just need to read your Instagram."*
 
@@ -7,7 +7,7 @@ Aegis is a real-time personal security audit tool that detects **Identity Links*
 
 ---
 
-## 🎯 What It Does
+## What It Does
 
 Most people don't get doxxed from a single post. They get doxxed from the **pattern across 30 posts**. Aegis catches that before you hit publish.
 
@@ -21,21 +21,21 @@ Most people don't get doxxed from a single post. They get doxxed from the **patt
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-- 🔍 **Instagram OSINT** — Live scraping via Instaloader with OCR on images (Tesseract) and EXIF metadata extraction
-- 🧠 **TF-IDF Identity Linking** — Scikit-learn cosine similarity across location, time, and activity signal categories
-- 📍 **Geographic Exposure Mapping** — Detects street names, landmarks, businesses and maps them to coordinates
-- 🕸️ **Stalker's Web** — Force-directed graph showing how your posts connect through shared entities
-- 📊 **Hex.tech Integration** — Automated API-triggered intelligence briefs on every analysis run
-- 🎯 **Risk Reduction Scenarios** — Quantified score drops for each specific recommendation
-- 🌧️ **Matrix Rain UI** — Cyberpunk aesthetic with animated katakana/hex character side panels
-- ⚡ **Background Processing** — Analysis returns instantly; Hex runs fire asynchronously
-- 🔄 **Score History** — Persistent breach probability tracking across sessions via JSONBlob
+- **Instagram OSINT** — Live scraping via Instaloader with OCR on images (Tesseract) and EXIF metadata extraction
+- **TF-IDF Identity Linking** — Scikit-learn cosine similarity across location, time, and activity signal categories
+- **Geographic Exposure Mapping** — Detects street names, landmarks, businesses and maps them to coordinates
+- **Stalker's Web** — Force-directed graph showing how your posts connect through shared entities
+- **Hex.tech Integration** — Automated API-triggered intelligence briefs on every analysis run
+- **Risk Reduction Scenarios** — Quantified score drops for each specific recommendation
+- **Matrix Rain UI** — Cyberpunk aesthetic with animated katakana/hex character side panels
+- **Background Processing** — Analysis returns instantly; Hex runs fire asynchronously
+- **Score History** — Persistent breach probability tracking across sessions via JSONBlob
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -66,7 +66,7 @@ Most people don't get doxxed from a single post. They get doxxed from the **patt
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Frontend
 | Technology | Version | Purpose |
@@ -100,7 +100,7 @@ Most people don't get doxxed from a single post. They get doxxed from the **patt
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - Node.js 18+
@@ -147,7 +147,7 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## 🔑 Environment Variables
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -159,7 +159,7 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 aegis/
@@ -190,7 +190,7 @@ aegis/
 
 ---
 
-## 🎮 Demo Mode
+## Demo Mode
 
 Use the handle **`@aegis_yhack`** to run a pre-loaded demo without needing a real Instagram account. It simulates a scanned profile with realistic post data, then try analyzing this draft post:
 
@@ -200,7 +200,7 @@ This triggers a full Critical-level breach detection showing how a seemingly inn
 
 ---
 
-## 🧠 How the Engine Works
+## How the Engine Works
 
 ### Identity Link Detection
 Aegis uses a three-category TF-IDF similarity model:
@@ -222,15 +222,7 @@ Each finding is scored by:
 
 ---
 
-## 📸 Screenshots
-
-> Dashboard with exposure map, stalker's web, and risk gauge
-
-> Hex intelligence brief with CIA-style OPSEC playbook
-
----
-
-## 🏆 Built For
+## Built For
 
 **YaleHack 2026** — Solo project by **Daniel Kwan**
 
