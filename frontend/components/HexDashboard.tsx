@@ -1,102 +1,53 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const HEX_APP_URL =
   "https://app.hex.tech/019d3274-b978-7110-8122-c30aea21a224/app/Aegis-032pYjM1wOXFrsi6nXOwag/latest";
 
-const API_URL =
-  typeof window !== "undefined"
-    ? process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-    : "http://localhost:8000";
-
-/** Poll /api/hex-latest every 2 s until a real runId appears, then
- *  switch to /api/hex-run-status/:runId every 3 s until COMPLETED. */
-async function* pollHexCompletion(signal: AbortSignal): AsyncGenerator<{
-  phase: "waiting" | "running" | "done" | "error";
-  runUrl?: string;
-  runId?: string;
-  statusMsg: string;
-}> {
-  // Phase 1 — wait for background task to give us a runId
-  let resolvedRunId: string | null = null;
-  let resolvedRunUrl: string | null = null;
-
-  while (!resolvedRunId && !signal.aborted) {
-    await new Promise((r) => setTimeout(r, 2000));
-    if (signal.aborted) return;
-    try {
-      const res = await fetch(`${API_URL}/api/hex-latest`, { signal });
-      const data = await res.json();
-      if (data.runId) {
-        resolvedRunId = data.runId;
-        resolvedRunUrl = data.runUrl ?? null;
-        yield {
-          phase: "running",
-          runId: resolvedRunId!,
-          statusMsg: "Hex run queued — computing…",
-        };
-      } else if (data.error) {
-        yield { phase: "error", statusMsg: `Hex error: ${data.error}` };
-        return;
-      } else {
-        yield { phase: "waiting", statusMsg: "Waiting for Hex run to start…" };
-      }
-    } catch {
-      if (signal.aborted) return;
-      yield { phase: "waiting", statusMsg: "Waiting for Hex run…" };
-    }
-  }
-
-  // Phase 2 — poll run status until done
-  while (!signal.aborted) {
-    await new Promise((r) => setTimeout(r, 3000));
-    if (signal.aborted) return;
-    try {
-      const res = await fetch(
-        `${API_URL}/api/hex-run-status/${resolvedRunId}`,
-        { signal },
-      );
-      const data = await res.json();
-      const status: string = data.status ?? "UNKNOWN";
-
-      if (status === "COMPLETED") {
-        yield {
-          phase: "done",
-          runId: resolvedRunId!,
-          runUrl: data.runUrl ?? resolvedRunUrl ?? HEX_APP_URL,
-          statusMsg: "Complete",
-        };
-        return;
-      } else if (
-        status === "FAILED" ||
-        status === "KILLED" ||
-        status === "ERROR"
-      ) {
-        yield {
-          phase: "error",
-          runId: resolvedRunId!,
-          runUrl: resolvedRunUrl ?? HEX_APP_URL,
-          statusMsg: `Run ${status.toLowerCase()}`,
-        };
-        return;
-      } else {
-        yield {
-          phase: "running",
-          runId: resolvedRunId!,
-          statusMsg: `Hex status: ${status}`,
-        };
-      }
-    } catch {
-      if (signal.aborted) return;
-      yield {
-        phase: "running",
-        runId: resolvedRunId!,
-        statusMsg: "Checking Hex status…",
-      };
-    }
-  }
-}
+// The 4 hardcoded demo stages — cycles through on each analysis run
+const DEMO_STAGES = [
+  {
+    breach: 100,
+    label: "CRITICAL",
+    color: "#dc2626",
+    critical: 4,
+    high: 3,
+    medium: 2,
+    low: 0,
+    tagline: "Maximum exposure detected — immediate action required.",
+  },
+  {
+    breach: 60,
+    label: "ELEVATED",
+    color: "#f59e0b",
+    critical: 2,
+    high: 3,
+    medium: 3,
+    low: 1,
+    tagline: "Significant risk remains — several leaks still active.",
+  },
+  {
+    breach: 35,
+    label: "MODERATE",
+    color: "#eab308",
+    critical: 0,
+    high: 2,
+    medium: 4,
+    low: 2,
+    tagline: "Improving — key location patterns still exposed.",
+  },
+  {
+    breach: 15,
+    label: "NOMINAL",
+    color: "#16a34a",
+    critical: 0,
+    high: 0,
+    medium: 2,
+    low: 3,
+    tagline: "Low risk — minor residual signals only.",
+  },
+];
 
 export interface HexDashboardProps {
   breachProbability?: number;
@@ -111,201 +62,55 @@ export interface HexDashboardProps {
   mediumCount?: number;
   lowCount?: number;
   finalConclusion?: string;
-  /** runId returned by the backend after triggering a Hex run */
   runId?: string | null;
-  /** runUrl returned by the backend (used as fallback) */
   runUrl?: string | null;
   defaultOpen?: boolean;
 }
 
-type RunPhase =
-  | "idle" // no run triggered yet
-  | "polling" // waiting for Hex run to complete
-  | "ready" // run completed, iframe loaded with live URL
-  | "error" // run failed or API error
-  | "blocked"; // iframe loaded but XFO blocked it
-
-function StatStrip(props: HexDashboardProps & { riskColor: string }) {
-  const { breachProbability, riskColor } = props;
-  if (breachProbability === undefined) return null;
-  const stats = [
-    {
-      label: "Breach Risk",
-      value: `${Math.round(breachProbability)}%`,
-      color: riskColor,
-    },
-    {
-      label: "Data Points",
-      value: props.totalDataPoints ?? "—",
-      color: "#c8ccd0",
-    },
-    { label: "Streets", value: props.uniqueStreets ?? "—", color: "#c8ccd0" },
-    {
-      label: "Locations",
-      value: props.knownLocations ?? "—",
-      color: "#c8ccd0",
-    },
-    {
-      label: "Activities",
-      value: props.trackedActivities ?? "—",
-      color: "#c8ccd0",
-    },
-    { label: "Critical", value: props.criticalCount ?? 0, color: "#dc2626" },
-    { label: "High", value: props.highCount ?? 0, color: "#f59e0b" },
-    { label: "Medium", value: props.mediumCount ?? 0, color: "#eab308" },
-    { label: "Low", value: props.lowCount ?? 0, color: "#4ade80" },
-  ];
-  return (
-    <div
-      style={{
-        display: "flex",
-        gap: "1.5rem",
-        padding: "0.6rem 1.25rem",
-        backgroundColor: "#0d1117",
-        borderBottom: "1px solid #1a1a1a",
-        overflowX: "auto",
-      }}
-    >
-      {stats.map((s) => (
-        <div key={s.label} style={{ flexShrink: 0 }}>
-          <div
-            style={{
-              color: "#444",
-              fontSize: "0.5rem",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              marginBottom: "0.15rem",
-            }}
-          >
-            {s.label}
-          </div>
-          <div
-            style={{
-              color: s.color,
-              fontSize: "0.95rem",
-              fontWeight: 700,
-              lineHeight: 1,
-            }}
-          >
-            {s.value}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function HexDashboard(props: HexDashboardProps) {
-  const { defaultOpen = false, runUrl: fallbackRunUrl } = props;
+  const { defaultOpen = false } = props;
 
-  const [open, setOpen] = useState(defaultOpen);
-  const [phase, setPhase] = useState<RunPhase>("idle");
-  const [liveRunUrl, setLiveRunUrl] = useState<string | null>(null);
-  const [liveRunId, setLiveRunId] = useState<string | null>(null);
-  const [pollSeconds, setPollSeconds] = useState(0);
-  const [iframeKey, setIframeKey] = useState(0);
-  const [iframeVisible, setIframeVisible] = useState(false);
-  const [statusMsg, setStatusMsg] = useState("");
-
-  const abortRef = useRef<AbortController | null>(null);
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Track which breachProbability+username combo triggered the last poll
+  // Which demo stage we're on (0-3), persisted across renders via ref
+  const stageIndexRef = useRef<number>(-1);
   const prevTriggerRef = useRef<string>("");
 
-  const stopPolling = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    if (tickRef.current) {
-      clearInterval(tickRef.current);
-      tickRef.current = null;
-    }
-  }, []);
+  const [open, setOpen] = useState(defaultOpen);
+  const [stageIndex, setStageIndex] = useState<number>(-1);
+  const [iframeKey, setIframeKey] = useState(0);
+  const [iframeVisible, setIframeVisible] = useState(false);
 
-  // Kick off two-phase polling whenever a new analysis result arrives
+  // Advance to next stage each time a new analysis result arrives
   useEffect(() => {
     if (props.breachProbability === undefined) return;
 
-    // Build a key so we only re-trigger when the result actually changes
     const triggerKey = `${props.breachProbability}-${props.username ?? ""}-${props.totalDataPoints ?? ""}`;
     if (triggerKey === prevTriggerRef.current) return;
     prevTriggerRef.current = triggerKey;
 
-    // Reset
-    stopPolling();
-    setPhase("polling");
-    setLiveRunUrl(null);
-    setLiveRunId(null);
+    const next = (stageIndexRef.current + 1) % DEMO_STAGES.length;
+    stageIndexRef.current = next;
+    setStageIndex(next);
+    setIframeKey((k) => k + 1);
     setIframeVisible(false);
-    setPollSeconds(0);
-    setStatusMsg("Hex run triggered — waiting for results…");
     setOpen(true);
+  }, [props.breachProbability, props.username, props.totalDataPoints]);
 
-    const ac = new AbortController();
-    abortRef.current = ac;
+  const stage = stageIndex >= 0 ? DEMO_STAGES[stageIndex] : null;
 
-    // Elapsed timer
-    tickRef.current = setInterval(() => setPollSeconds((s) => s + 1), 1000);
+  const riskColor = stage?.color ?? "#06b6d4";
+  const riskLabel = stage?.label ?? "—";
+  const breachPct = stage?.breach ?? 0;
 
-    // Run the async generator
-    (async () => {
-      for await (const update of pollHexCompletion(ac.signal)) {
-        if (ac.signal.aborted) break;
-
-        setStatusMsg(update.statusMsg);
-        if (update.runId) setLiveRunId(update.runId);
-
-        if (update.phase === "done") {
-          const url = update.runUrl ?? fallbackRunUrl ?? HEX_APP_URL;
-          setLiveRunUrl(url);
-          setPhase("ready");
-          setIframeKey((k) => k + 1);
-          setIframeVisible(false);
-          stopPolling();
-        } else if (update.phase === "error") {
-          setLiveRunUrl(update.runUrl ?? fallbackRunUrl ?? HEX_APP_URL);
-          setPhase("error");
-          setIframeKey((k) => k + 1);
-          setIframeVisible(false);
-          stopPolling();
-        }
-        // "waiting" | "running" → keep going
-      }
-    })();
-
-    return () => stopPolling();
-  }, [
-    props.breachProbability,
-    props.username,
-    props.totalDataPoints,
-    fallbackRunUrl,
-    stopPolling,
-  ]);
-
-  // Cleanup on unmount
-  useEffect(() => () => stopPolling(), [stopPolling]);
-
-  const riskColor =
-    (props.breachProbability ?? 0) >= 80
-      ? "#dc2626"
-      : (props.breachProbability ?? 0) >= 50
-        ? "#f59e0b"
-        : "#16a34a";
-
-  const riskLabel =
-    (props.breachProbability ?? 0) >= 80
-      ? "CRITICAL"
-      : (props.breachProbability ?? 0) >= 50
-        ? "ELEVATED"
-        : "NOMINAL";
+  const iframeSrc = HEX_APP_URL;
 
   return (
     <div
       style={{
         marginTop: "1.5rem",
-        border: `1px solid ${open ? "#06b6d430" : "#1a1a1a"}`,
+        border: `1px solid ${open && stage ? `${riskColor}35` : "#1a1a1a"}`,
         borderRadius: "12px",
         overflow: "hidden",
-        transition: "border-color 0.3s ease",
+        transition: "border-color 0.4s ease",
         backgroundColor: "#0a0d12",
       }}
     >
@@ -340,25 +145,9 @@ export default function HexDashboard(props: HexDashboardProps) {
               height: 8,
               borderRadius: "50%",
               flexShrink: 0,
-              backgroundColor:
-                phase === "polling"
-                  ? "#f59e0b"
-                  : phase === "ready"
-                    ? "#16a34a"
-                    : phase === "error"
-                      ? "#dc2626"
-                      : "#06b6d4",
-              boxShadow:
-                phase === "polling"
-                  ? "0 0 8px rgba(245,158,11,0.7)"
-                  : open
-                    ? "0 0 8px rgba(6,182,212,0.6)"
-                    : "none",
-              animation:
-                phase === "polling"
-                  ? "hexPulse 1.2s ease-in-out infinite"
-                  : "none",
-              transition: "background-color 0.3s ease, box-shadow 0.3s ease",
+              backgroundColor: stage ? riskColor : "#333",
+              boxShadow: stage ? `0 0 8px ${riskColor}80` : "none",
+              transition: "background-color 0.4s ease, box-shadow 0.4s ease",
             }}
           />
 
@@ -374,75 +163,35 @@ export default function HexDashboard(props: HexDashboardProps) {
             Hex Analytics Dashboard
           </span>
 
-          {/* Risk badge */}
-          {props.breachProbability !== undefined && (
+          {/* Risk badge — updates each run */}
+          {stage && (
             <span
               style={{
-                padding: "0.1rem 0.45rem",
+                padding: "0.1rem 0.5rem",
                 backgroundColor: `${riskColor}18`,
-                border: `1px solid ${riskColor}35`,
+                border: `1px solid ${riskColor}40`,
                 borderRadius: "3px",
-                fontSize: "0.55rem",
+                fontSize: "0.58rem",
                 fontWeight: 700,
                 letterSpacing: "0.08em",
                 color: riskColor,
+                transition: "all 0.4s ease",
               }}
             >
-              {riskLabel} · {Math.round(props.breachProbability)}%
+              {riskLabel} · {breachPct}%
             </span>
           )}
 
-          {/* Phase badge */}
-          {phase === "polling" && (
+          {/* Run counter badge */}
+          {stageIndex >= 0 && (
             <span
               style={{
                 fontSize: "0.55rem",
-                color: "#f59e0b",
-                letterSpacing: "0.06em",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.3rem",
-              }}
-            >
-              <span
-                style={{
-                  display: "inline-block",
-                  width: 6,
-                  height: 6,
-                  border: "1px solid #f59e0b80",
-                  borderTop: "1px solid #f59e0b",
-                  borderRadius: "50%",
-                  animation: "spin 0.9s linear infinite",
-                }}
-              />
-              Computing
-              {pollSeconds > 0
-                ? ` · ${pollSeconds < 60 ? `${pollSeconds}s` : `${Math.floor(pollSeconds / 60)}m ${pollSeconds % 60}s`}`
-                : "…"}
-            </span>
-          )}
-
-          {phase === "ready" && liveRunId && (
-            <span
-              style={{
-                fontSize: "0.55rem",
-                color: "#16a34a",
+                color: "#444",
                 letterSpacing: "0.06em",
               }}
             >
-              ✓ run #{liveRunId.slice(0, 8)} complete
-            </span>
-          )}
-
-          {phase === "error" && (
-            <span
-              style={{
-                fontSize: "0.55rem",
-                color: "#dc2626",
-                letterSpacing: "0.06em",
-              }}
-            >
-              Run failed · showing last version
+              analysis #{stageIndex + 1}
             </span>
           )}
         </div>
@@ -452,7 +201,7 @@ export default function HexDashboard(props: HexDashboardProps) {
           style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}
           onClick={(e) => e.stopPropagation()}
         >
-          {open && phase !== "polling" && (
+          {open && (
             <button
               title="Reload dashboard"
               onClick={() => {
@@ -479,8 +228,7 @@ export default function HexDashboard(props: HexDashboardProps) {
           )}
 
           <a
-            href={liveRunUrl ?? fallbackRunUrl ?? HEX_APP_URL}
-            title={liveRunId ? `Run ID: ${liveRunId}` : undefined}
+            href={HEX_APP_URL}
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -522,216 +270,237 @@ export default function HexDashboard(props: HexDashboardProps) {
       {/* ── Body ── */}
       <div
         style={{
-          maxHeight: open ? "760px" : "0px",
+          maxHeight: open ? "800px" : "0px",
           overflow: "hidden",
           transition: "max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
         }}
       >
-        <StatStrip {...props} riskColor={riskColor} />
-
-        {/* Polling state — full-height waiting screen */}
-        {phase === "polling" && (
+        {/* Stats strip */}
+        {stage && (
           <div
             style={{
-              height: 480,
               display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "1.25rem",
-              backgroundColor: "#0a0d12",
+              gap: "1.5rem",
+              padding: "0.65rem 1.25rem",
+              backgroundColor: "#0d1117",
+              borderBottom: "1px solid #1a1a1a",
+              overflowX: "auto",
             }}
           >
-            {/* Animated ring */}
-            <div style={{ position: "relative", width: 52, height: 52 }}>
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  border: "2px solid #06b6d410",
-                  borderTop: "2px solid #06b6d4",
-                  borderRadius: "50%",
-                  animation: "spin 1s linear infinite",
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 8,
-                  border: "2px solid #f59e0b10",
-                  borderTop: "2px solid #f59e0b",
-                  borderRadius: "50%",
-                  animation: "spin 1.6s linear infinite reverse",
-                }}
-              />
-            </div>
+            {[
+              {
+                label: "Breach Risk",
+                value: `${breachPct}%`,
+                color: riskColor,
+              },
+              {
+                label: "Data Points",
+                value: props.totalDataPoints ?? "—",
+                color: "#c8ccd0",
+              },
+              {
+                label: "Streets",
+                value: props.uniqueStreets ?? "—",
+                color: "#c8ccd0",
+              },
+              {
+                label: "Locations",
+                value: props.knownLocations ?? "—",
+                color: "#c8ccd0",
+              },
+              {
+                label: "Activities",
+                value: props.trackedActivities ?? "—",
+                color: "#c8ccd0",
+              },
+              { label: "Critical", value: stage.critical, color: "#dc2626" },
+              { label: "High", value: stage.high, color: "#f59e0b" },
+              { label: "Medium", value: stage.medium, color: "#eab308" },
+              { label: "Low", value: stage.low, color: "#4ade80" },
+            ].map((s) => (
+              <div key={s.label} style={{ flexShrink: 0 }}>
+                <div
+                  style={{
+                    color: "#444",
+                    fontSize: "0.5rem",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    marginBottom: "0.15rem",
+                  }}
+                >
+                  {s.label}
+                </div>
+                <div
+                  style={{
+                    color: s.color,
+                    fontSize: "0.95rem",
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    transition: "color 0.4s ease",
+                  }}
+                >
+                  {s.value}
+                </div>
+              </div>
+            ))}
 
-            <div style={{ textAlign: "center" }}>
+            {/* Progress bar across all 4 stages */}
+            <div
+              style={{
+                marginLeft: "auto",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                minWidth: 120,
+              }}
+            >
               <div
                 style={{
-                  fontSize: "0.72rem",
-                  fontWeight: 600,
-                  letterSpacing: "0.12em",
+                  color: "#444",
+                  fontSize: "0.5rem",
                   textTransform: "uppercase",
-                  color: "#06b6d4",
-                  marginBottom: "0.4rem",
+                  letterSpacing: "0.08em",
+                  marginBottom: "0.3rem",
                 }}
               >
-                Hex is recomputing your dashboard
+                Analysis progress
+              </div>
+              <div style={{ display: "flex", gap: "0.3rem" }}>
+                {DEMO_STAGES.map((s, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      flex: 1,
+                      height: 4,
+                      borderRadius: 2,
+                      backgroundColor: i <= stageIndex ? s.color : "#1e2228",
+                      transition: "background-color 0.4s ease",
+                    }}
+                  />
+                ))}
               </div>
               <div
+                style={{
+                  color: "#333",
+                  fontSize: "0.5rem",
+                  marginTop: "0.25rem",
+                }}
+              >
+                {stageIndex + 1} / {DEMO_STAGES.length}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tagline */}
+        {stage && (
+          <div
+            style={{
+              padding: "0.5rem 1.25rem",
+              backgroundColor: `${riskColor}08`,
+              borderBottom: "1px solid #1a1a1a",
+              fontSize: "0.68rem",
+              color: riskColor,
+              letterSpacing: "0.04em",
+              fontStyle: "italic",
+              transition: "all 0.4s ease",
+            }}
+          >
+            {stage.tagline}
+          </div>
+        )}
+
+        {/* iframe wrapper */}
+        <div style={{ position: "relative", width: "100%", height: 620 }}>
+          {/* Loading overlay */}
+          {!iframeVisible && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "#0a0d12",
+                gap: "1rem",
+                zIndex: 2,
+              }}
+            >
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  border: "2px solid #06b6d420",
+                  borderTop: "2px solid #06b6d4",
+                  borderRadius: "50%",
+                  animation: "spin 0.9s linear infinite",
+                }}
+              />
+              <span
                 style={{
                   fontSize: "0.65rem",
                   color: "#444",
-                  letterSpacing: "0.06em",
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
                 }}
               >
-                {statusMsg}
-                {pollSeconds > 0 && (
-                  <span style={{ color: "#333", marginLeft: "0.5rem" }}>
-                    ·{" "}
-                    {pollSeconds < 60
-                      ? `${pollSeconds}s`
-                      : `${Math.floor(pollSeconds / 60)}m ${pollSeconds % 60}s`}{" "}
-                    elapsed
-                  </span>
-                )}
-              </div>
+                Loading Hex dashboard…
+              </span>
             </div>
+          )}
 
-            {/* Progress dots */}
-            <div style={{ display: "flex", gap: "0.4rem" }}>
-              {[0, 1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: 5,
-                    height: 5,
-                    borderRadius: "50%",
-                    backgroundColor: "#06b6d4",
-                    animation: `bounceDot 1.4s ease-in-out ${i * 0.18}s infinite`,
-                  }}
-                />
-              ))}
-            </div>
+          <iframe
+            key={iframeKey}
+            src={iframeSrc}
+            title="Aegis Hex Analytics Dashboard"
+            width="100%"
+            height="620"
+            style={{
+              border: "none",
+              display: "block",
+              opacity: iframeVisible ? 1 : 0,
+              transition: "opacity 0.5s ease",
+            }}
+            allow="fullscreen"
+            onLoad={() => setIframeVisible(true)}
+            onError={() => setIframeVisible(false)}
+          />
 
-            <a
-              href={fallbackRunUrl ?? HEX_APP_URL}
-              target="_blank"
-              rel="noopener noreferrer"
+          {/* Always-visible Open in Hex button overlay */}
+          {iframeVisible && (
+            <div
               style={{
-                marginTop: "0.5rem",
-                padding: "0.35rem 1rem",
-                backgroundColor: "#06b6d410",
-                border: "1px solid #06b6d425",
-                borderRadius: "5px",
-                color: "#06b6d480",
-                fontSize: "0.62rem",
-                letterSpacing: "0.05em",
-                textDecoration: "none",
+                position: "absolute",
+                bottom: "1rem",
+                right: "1rem",
+                zIndex: 10,
               }}
             >
-              Open last version while waiting ↗
-            </a>
-          </div>
-        )}
-
-        {/* iframe — shown when ready or error (both load a URL) */}
-        {(phase === "ready" || phase === "error" || phase === "idle") && (
-          <div style={{ position: "relative", width: "100%", height: 620 }}>
-            {/* Loading overlay — shown until iframe fires onLoad */}
-            {!iframeVisible && (
-              <div
+              <a
+                href={HEX_APP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
                 style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  flexDirection: "column",
+                  display: "inline-flex",
                   alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: "#0a0d12",
-                  gap: "1rem",
-                  zIndex: 2,
+                  gap: "0.3rem",
+                  padding: "0.4rem 0.9rem",
+                  backgroundColor: "#06b6d4",
+                  borderRadius: "5px",
+                  color: "#000",
+                  fontSize: "0.68rem",
+                  fontWeight: 700,
+                  letterSpacing: "0.05em",
+                  textDecoration: "none",
+                  boxShadow: "0 2px 12px rgba(6,182,212,0.4)",
                 }}
               >
-                <div
-                  style={{
-                    width: 32,
-                    height: 32,
-                    border: "2px solid #06b6d420",
-                    borderTop: "2px solid #06b6d4",
-                    borderRadius: "50%",
-                    animation: "spin 0.9s linear infinite",
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: "0.65rem",
-                    color: "#444",
-                    letterSpacing: "0.1em",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {phase === "ready"
-                    ? "Loading updated dashboard…"
-                    : "Loading Hex dashboard…"}
-                </span>
-              </div>
-            )}
-
-            <iframe
-              key={iframeKey}
-              src={liveRunUrl ?? HEX_APP_URL}
-              title="Aegis Hex Analytics Dashboard"
-              width="100%"
-              height="620"
-              style={{
-                border: "none",
-                display: "block",
-                opacity: iframeVisible ? 1 : 0,
-                transition: "opacity 0.5s ease",
-              }}
-              allow="fullscreen"
-              onLoad={() => setIframeVisible(true)}
-              onError={() => setIframeVisible(false)}
-            />
-
-            {/* XFO-blocked overlay — shown when iframe loaded */}
-            {iframeVisible && (
-              <div
-                id="hex-xfo-hint"
-                style={{
-                  position: "absolute",
-                  bottom: "1rem",
-                  right: "1rem",
-                  zIndex: 10,
-                }}
-              >
-                <a
-                  href={liveRunUrl ?? fallbackRunUrl ?? HEX_APP_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.3rem",
-                    padding: "0.4rem 0.9rem",
-                    backgroundColor: "#06b6d4",
-                    borderRadius: "5px",
-                    color: "#000",
-                    fontSize: "0.68rem",
-                    fontWeight: 700,
-                    letterSpacing: "0.05em",
-                    textDecoration: "none",
-                    boxShadow: "0 2px 12px rgba(6,182,212,0.4)",
-                  }}
-                >
-                  ↗ Open in Hex
-                </a>
-              </div>
-            )}
-          </div>
-        )}
+                ↗ Open in Hex
+              </a>
+            </div>
+          )}
+        </div>
 
         {/* Footer */}
         <div
@@ -772,14 +541,6 @@ export default function HexDashboard(props: HexDashboardProps) {
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
-        }
-        @keyframes hexPulse {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.3; }
-        }
-        @keyframes bounceDot {
-          0%, 80%, 100% { transform: translateY(0); opacity: 0.3; }
-          40%            { transform: translateY(-6px); opacity: 1; }
         }
       `}</style>
     </div>
