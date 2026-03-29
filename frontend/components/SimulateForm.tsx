@@ -129,7 +129,9 @@ export default function SimulateForm() {
     } catch (err) {
       clearInterval(progressInterval);
       console.error("Sync error:", err);
-      setSyncError("Error connecting to backend. Is the FastAPI server running?");
+      setSyncError(
+        "Error connecting to backend. Is the FastAPI server running?",
+      );
     } finally {
       setSyncing(false);
     }
@@ -191,13 +193,17 @@ export default function SimulateForm() {
 
   return (
     <div
-      style={isAlarm ? {
-        border: "1px solid rgba(220,38,38,0.15)",
-        borderRadius: "12px",
-        padding: "1.5rem",
-        margin: "-1.5rem",
-        animation: "alarmPulse 3s ease-in-out infinite",
-      } : undefined}
+      style={
+        isAlarm
+          ? {
+              border: "1px solid rgba(220,38,38,0.15)",
+              borderRadius: "12px",
+              padding: "1.5rem",
+              margin: "-1.5rem",
+              animation: "alarmPulse 3s ease-in-out infinite",
+            }
+          : undefined
+      }
     >
       {/* Exposure Map Stats Bar */}
       {exposureMap && (
@@ -222,23 +228,62 @@ export default function SimulateForm() {
               { label: "Day Patterns", value: exposureMap.day_patterns },
             ].map((stat) => (
               <div key={stat.label}>
-                <div style={{ color: "#444", fontSize: "0.55rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <div
+                  style={{
+                    color: "#444",
+                    fontSize: "0.55rem",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                  }}
+                >
                   {stat.label}
                 </div>
-                <div style={{ color: "#c8ccd0", fontSize: "1.15rem", fontWeight: 700 }}>{stat.value}</div>
+                <div
+                  style={{
+                    color: "#c8ccd0",
+                    fontSize: "1.15rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {stat.value}
+                </div>
               </div>
             ))}
           </div>
-          <span style={{ color: "#222", fontSize: "0.6rem", letterSpacing: "0.1em" }}>EXPOSURE MAP</span>
+          <span
+            style={{
+              color: "#222",
+              fontSize: "0.6rem",
+              letterSpacing: "0.1em",
+            }}
+          >
+            EXPOSURE MAP
+          </span>
         </div>
       )}
 
       {/* STEP 1: Instagram OSINT */}
-      <div style={{ marginBottom: "2.5rem", paddingBottom: "2rem", borderBottom: "1px solid #141618" }}>
-        <div style={{ ...labelStyle, color: "#16a34a" }}>STEP 1 // INSTAGRAM OSINT</div>
-        <p style={{ color: "#555", fontSize: "0.78rem", margin: "0 0 1rem", lineHeight: 1.5 }}>
+      <div
+        style={{
+          marginBottom: "2.5rem",
+          paddingBottom: "2rem",
+          borderBottom: "1px solid #141618",
+        }}
+      >
+        <div style={{ ...labelStyle, color: "#16a34a" }}>
+          STEP 1 // INSTAGRAM OSINT
+        </div>
+        <p
+          style={{
+            color: "#555",
+            fontSize: "0.78rem",
+            margin: "0 0 1rem",
+            lineHeight: 1.5,
+          }}
+        >
           Enter a public Instagram handle. Aegis will scrape their past posts,
-          run OCR on images, extract locations and timestamps, and build the exposure map.
+          run OCR on images, extract locations and timestamps, and build the
+          exposure map.
         </p>
 
         <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem" }}>
@@ -300,7 +345,13 @@ export default function SimulateForm() {
                 marginBottom: "0.3rem",
               }}
             >
-              <span style={{ color: "#16a34a", fontSize: "0.7rem", fontWeight: 600 }}>
+              <span
+                style={{
+                  color: "#16a34a",
+                  fontSize: "0.7rem",
+                  fontWeight: 600,
+                }}
+              >
                 Scanning @{username.replace("@", "")}...
               </span>
               <span style={{ color: "#444", fontSize: "0.7rem" }}>
@@ -331,7 +382,13 @@ export default function SimulateForm() {
 
         {/* Sync error */}
         {syncError && (
-          <p style={{ color: "#dc2626", fontSize: "0.78rem", margin: "0.5rem 0 0" }}>
+          <p
+            style={{
+              color: "#dc2626",
+              fontSize: "0.78rem",
+              margin: "0.5rem 0 0",
+            }}
+          >
             {syncError}
           </p>
         )}
@@ -347,8 +404,21 @@ export default function SimulateForm() {
               animation: "fadeInUp 0.4s ease-out",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-              <span style={{ color: "#16a34a", fontSize: "0.78rem", fontWeight: 600 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <span
+                style={{
+                  color: "#16a34a",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                }}
+              >
                 @{syncResult.username} scanned
               </span>
               <span style={{ color: "#444", fontSize: "0.7rem" }}>
@@ -358,31 +428,49 @@ export default function SimulateForm() {
 
             {/* Post summary tags */}
             {syncResult.posts && syncResult.posts.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginBottom: "0.75rem" }}>
-                {syncResult.posts.flatMap((p) => [
-                  ...p.entities_found.streets,
-                  ...p.entities_found.places,
-                  ...p.entities_found.businesses,
-                ]).filter((v, i, a) => a.indexOf(v) === i).slice(0, 20).map((ent, i) => (
-                  <span
-                    key={i}
-                    style={{
-                      padding: "0.15rem 0.45rem",
-                      backgroundColor: "#06b6d410",
-                      border: "1px solid #06b6d420",
-                      borderRadius: "3px",
-                      fontSize: "0.65rem",
-                      color: "#06b6d4",
-                    }}
-                  >
-                    {ent}
-                  </span>
-                ))}
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.3rem",
+                  marginBottom: "0.75rem",
+                }}
+              >
+                {syncResult.posts
+                  .flatMap((p) => [
+                    ...p.entities_found.streets,
+                    ...p.entities_found.places,
+                    ...p.entities_found.businesses,
+                  ])
+                  .filter((v, i, a) => a.indexOf(v) === i)
+                  .slice(0, 20)
+                  .map((ent, i) => (
+                    <span
+                      key={i}
+                      style={{
+                        padding: "0.15rem 0.45rem",
+                        backgroundColor: "#06b6d410",
+                        border: "1px solid #06b6d420",
+                        borderRadius: "3px",
+                        fontSize: "0.65rem",
+                        color: "#06b6d4",
+                      }}
+                    >
+                      {ent}
+                    </span>
+                  ))}
               </div>
             )}
 
             {syncResult.final_conclusion && (
-              <p style={{ color: "#667", fontSize: "0.75rem", margin: 0, lineHeight: 1.5 }}>
+              <p
+                style={{
+                  color: "#667",
+                  fontSize: "0.75rem",
+                  margin: 0,
+                  lineHeight: 1.5,
+                }}
+              >
                 {syncResult.final_conclusion}
               </p>
             )}
@@ -391,10 +479,19 @@ export default function SimulateForm() {
       </div>
 
       {/* STEP 2: Pre-Post Analysis */}
-      <div style={{ ...labelStyle, color: "#dc2626" }}>STEP 2 // PRE-POST ANALYSIS</div>
-      <p style={{ color: "#555", fontSize: "0.78rem", margin: "0 0 1rem", lineHeight: 1.5 }}>
-        Paste your draft post below. Aegis will scan it against the scraped baseline
-        to detect Identity Links that could expose sensitive patterns.
+      <div style={{ ...labelStyle, color: "#dc2626" }}>
+        STEP 2 // PRE-POST ANALYSIS
+      </div>
+      <p
+        style={{
+          color: "#555",
+          fontSize: "0.78rem",
+          margin: "0 0 1rem",
+          lineHeight: 1.5,
+        }}
+      >
+        Paste your draft post below. Aegis will scan it against the scraped
+        baseline to detect Identity Links that could expose sensitive patterns.
       </p>
 
       <textarea
@@ -405,7 +502,14 @@ export default function SimulateForm() {
         style={{ ...inputStyle, resize: "vertical", marginBottom: "1rem" }}
       />
 
-      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          marginBottom: "1.5rem",
+        }}
+      >
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
@@ -456,13 +560,18 @@ export default function SimulateForm() {
       </button>
 
       {error && (
-        <p style={{ color: "#dc2626", fontSize: "0.78rem", marginTop: "1rem" }}>{error}</p>
+        <p style={{ color: "#dc2626", fontSize: "0.78rem", marginTop: "1rem" }}>
+          {error}
+        </p>
       )}
 
       {/* Results */}
       {result && (
         <div style={{ marginTop: "2rem" }}>
-          <AuditResult result={result} />
+          <AuditResult
+            result={result}
+            username={syncResult?.username ?? username.replace("@", "").trim()}
+          />
         </div>
       )}
     </div>

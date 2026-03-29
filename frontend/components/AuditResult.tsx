@@ -6,6 +6,7 @@ import TypingEffect from "./TypingEffect";
 import DigitalShadow from "./DigitalShadow";
 import VisualizationWrapper from "./VisualizationWrapper";
 import ScoreTracker, { type ScoreEntry } from "./ScoreTracker";
+import HexDashboard from "./HexDashboard";
 
 interface VulnFinding {
   category: string;
@@ -61,13 +62,22 @@ interface AnalysisResult {
 
 interface AuditResultProps {
   result: AnalysisResult;
+  username?: string;
 }
 
-const SEVERITY_CONFIG: Record<string, { color: string; bg: string; border: string; icon: string }> = {
-  critical: { color: "#ff4444", bg: "#2d0a0a", border: "#dc262640", icon: "!!" },
-  high:     { color: "#f59e0b", bg: "#2d1a0a", border: "#d9770640", icon: "!" },
-  medium:   { color: "#eab308", bg: "#1a1a0a", border: "#ca8a0440", icon: "~" },
-  low:      { color: "#4ade80", bg: "#0a1a0a", border: "#16a34a40", icon: "-" },
+const SEVERITY_CONFIG: Record<
+  string,
+  { color: string; bg: string; border: string; icon: string }
+> = {
+  critical: {
+    color: "#ff4444",
+    bg: "#2d0a0a",
+    border: "#dc262640",
+    icon: "!!",
+  },
+  high: { color: "#f59e0b", bg: "#2d1a0a", border: "#d9770640", icon: "!" },
+  medium: { color: "#eab308", bg: "#1a1a0a", border: "#ca8a0440", icon: "~" },
+  low: { color: "#4ade80", bg: "#0a1a0a", border: "#16a34a40", icon: "-" },
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -76,22 +86,47 @@ const CATEGORY_LABELS: Record<string, string> = {
   activities: "Activity Match",
 };
 
-export default function AuditResult({ result }: AuditResultProps) {
+export default function AuditResult({ result, username }: AuditResultProps) {
   const sortedVulns = [...result.vulnerability_map].sort((a, b) => {
-    const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    const order: Record<string, number> = {
+      critical: 0,
+      high: 1,
+      medium: 2,
+      low: 3,
+    };
     return (order[a.severity] ?? 4) - (order[b.severity] ?? 4);
   });
 
   const hasCritical = sortedVulns.some((v) => v.severity === "critical");
   const hasHigh = sortedVulns.some((v) => v.severity === "high");
 
+  // Severity counts for Hex dashboard
+  const severityCounts = sortedVulns.reduce(
+    (acc, v) => {
+      const sev = v.severity as "critical" | "high" | "medium" | "low";
+      acc[sev] = (acc[sev] ?? 0) + 1;
+      return acc;
+    },
+    { critical: 0, high: 0, medium: 0, low: 0 } as Record<string, number>,
+  );
+
   // Collect all detected entities for the entity tag cloud
   const allEntities: { label: string; type: string }[] = [];
-  result.detected_entities.streets.forEach((s) => allEntities.push({ label: s, type: "street" }));
-  result.detected_entities.places.forEach((s) => allEntities.push({ label: s, type: "place" }));
-  result.detected_entities.businesses.forEach((s) => allEntities.push({ label: s, type: "business" }));
-  result.detected_entities.times.forEach((s) => allEntities.push({ label: s, type: "time" }));
-  result.detected_entities.coordinates.forEach((s) => allEntities.push({ label: s, type: "coord" }));
+  result.detected_entities.streets.forEach((s) =>
+    allEntities.push({ label: s, type: "street" }),
+  );
+  result.detected_entities.places.forEach((s) =>
+    allEntities.push({ label: s, type: "place" }),
+  );
+  result.detected_entities.businesses.forEach((s) =>
+    allEntities.push({ label: s, type: "business" }),
+  );
+  result.detected_entities.times.forEach((s) =>
+    allEntities.push({ label: s, type: "time" }),
+  );
+  result.detected_entities.coordinates.forEach((s) =>
+    allEntities.push({ label: s, type: "coord" }),
+  );
 
   const entityTypeColor: Record<string, string> = {
     street: "#f43f5e",
@@ -110,14 +145,26 @@ export default function AuditResult({ result }: AuditResultProps) {
       <div
         style={{
           padding: "1.25rem 1.5rem",
-          backgroundColor: hasCritical ? "#1a0808" : hasHigh ? "#1a1208" : "#0d1117",
+          backgroundColor: hasCritical
+            ? "#1a0808"
+            : hasHigh
+              ? "#1a1208"
+              : "#0d1117",
           border: `1px solid ${hasCritical ? "#dc262630" : hasHigh ? "#d9770630" : "#1a1a1a"}`,
           borderRadius: "10px",
           marginBottom: "1.5rem",
-          ...(hasCritical ? { animation: "pulseGlow 3s ease-in-out infinite" } : {}),
+          ...(hasCritical
+            ? { animation: "pulseGlow 3s ease-in-out infinite" }
+            : {}),
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+          }}
+        >
           <div>
             <div
               style={{
@@ -135,15 +182,75 @@ export default function AuditResult({ result }: AuditResultProps) {
               style={{
                 fontSize: "1.1rem",
                 fontWeight: 700,
-                color: hasCritical ? "#ff4444" : hasHigh ? "#f59e0b" : "#4ade80",
+                color: hasCritical
+                  ? "#ff4444"
+                  : hasHigh
+                    ? "#f59e0b"
+                    : "#4ade80",
               }}
             >
-              {sortedVulns.length} {sortedVulns.length === 1 ? "Finding" : "Findings"} Detected
+              {sortedVulns.length}{" "}
+              {sortedVulns.length === 1 ? "Finding" : "Findings"} Detected
             </div>
           </div>
-          <RiskGauge breachProbability={result.breach_probability} />
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: "0.6rem",
+            }}
+          >
+            <RiskGauge breachProbability={result.breach_probability} />
+            {/* Quick-access Hex button */}
+            <a
+              href={
+                result.hex?.runUrl ??
+                `https://app.hex.tech/019d3274-b978-7110-8122-c30aea21a224/app/Aegis-032pYjM1wOXFrsi6nXOwag/latest`
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.3rem",
+                padding: "0.25rem 0.65rem",
+                backgroundColor: "#06b6d415",
+                border: "1px solid #06b6d430",
+                borderRadius: "4px",
+                color: "#06b6d4",
+                fontSize: "0.6rem",
+                fontWeight: 600,
+                letterSpacing: "0.06em",
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+                cursor: "pointer",
+              }}
+            >
+              ↗ View in Hex
+            </a>
+          </div>
         </div>
       </div>
+
+      {/* ── Hex Analytics Dashboard (live embed) ── */}
+      <HexDashboard
+        breachProbability={result.breach_probability}
+        username={username}
+        totalDataPoints={result.exposure_map?.total_data_points}
+        uniqueStreets={result.exposure_map?.unique_streets}
+        knownLocations={result.exposure_map?.known_locations}
+        trackedActivities={result.exposure_map?.tracked_activities}
+        dayPatterns={result.exposure_map?.day_patterns}
+        criticalCount={severityCounts.critical}
+        highCount={severityCounts.high}
+        mediumCount={severityCounts.medium}
+        lowCount={severityCounts.low}
+        finalConclusion={result.final_conclusion}
+        runUrl={result.hex?.runUrl ?? null}
+        runId={result.hex?.runId ?? null}
+        defaultOpen
+      />
 
       {/* Digital Shadow Scorecard */}
       <DigitalShadow
@@ -234,7 +341,13 @@ export default function AuditResult({ result }: AuditResultProps) {
                 <span style={{ color: "#888", fontSize: "0.72rem" }}>
                   {CATEGORY_LABELS[cat] ?? cat}
                 </span>
-                <span style={{ color: "#06b6d4", fontSize: "0.72rem", fontWeight: 600 }}>
+                <span
+                  style={{
+                    color: "#06b6d4",
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                  }}
+                >
                   {(score * 100).toFixed(1)}%
                 </span>
               </div>
@@ -284,7 +397,9 @@ export default function AuditResult({ result }: AuditResultProps) {
           >
             VULNERABILITY MAP
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
+          >
             {sortedVulns.map((vuln, i) => {
               const cfg = SEVERITY_CONFIG[vuln.severity] ?? SEVERITY_CONFIG.low;
               return (
@@ -318,7 +433,14 @@ export default function AuditResult({ result }: AuditResultProps) {
                     {cfg.icon}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.15rem" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "0.15rem",
+                      }}
+                    >
                       <span
                         style={{
                           fontSize: "0.7rem",
@@ -334,7 +456,13 @@ export default function AuditResult({ result }: AuditResultProps) {
                         {vuln.evidence_count} evidence
                       </span>
                     </div>
-                    <div style={{ fontSize: "0.75rem", color: "#999", lineHeight: 1.4 }}>
+                    <div
+                      style={{
+                        fontSize: "0.75rem",
+                        color: "#999",
+                        lineHeight: 1.4,
+                      }}
+                    >
                       {vuln.finding}
                     </div>
                   </div>
@@ -384,10 +512,18 @@ export default function AuditResult({ result }: AuditResultProps) {
             />
             PATTERN DETECTION
           </div>
-          <div style={{ fontSize: "0.82rem", color: "#b0b8c0", lineHeight: 1.7 }}>
+          <div
+            style={{ fontSize: "0.82rem", color: "#b0b8c0", lineHeight: 1.7 }}
+          >
             {result.final_conclusion.includes("[SIGNAL DETECTED]") ? (
               // Structured conclusion format
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.85rem",
+                }}
+              >
                 {result.final_conclusion.split("\n\n").map((block, i) => {
                   const tagMatch = block.match(/^\[([A-Z\s]+)\]:\s*([\s\S]*)/);
                   if (!tagMatch) return <span key={i}>{block}</span>;
@@ -396,7 +532,7 @@ export default function AuditResult({ result }: AuditResultProps) {
                   const tagColors: Record<string, string> = {
                     "SIGNAL DETECTED": "#dc2626",
                     "LEAK SOURCE": "#f59e0b",
-                    "FORECAST": "#06b6d4",
+                    FORECAST: "#06b6d4",
                   };
                   return (
                     <div key={i}>
@@ -416,7 +552,13 @@ export default function AuditResult({ result }: AuditResultProps) {
                       >
                         {tag}
                       </span>
-                      <div style={{ fontSize: "0.8rem", color: "#999", lineHeight: 1.6 }}>
+                      <div
+                        style={{
+                          fontSize: "0.8rem",
+                          color: "#999",
+                          lineHeight: 1.6,
+                        }}
+                      >
                         {i === 2 ? (
                           <TypingEffect text={body} speed={12} />
                         ) : (
@@ -435,7 +577,10 @@ export default function AuditResult({ result }: AuditResultProps) {
       )}
 
       {/* Stalker's Web + Privacy Improvements */}
-      <VisualizationWrapper web={result.web} improvements={result.risk_reductions} />
+      <VisualizationWrapper
+        web={result.web}
+        improvements={result.risk_reductions}
+      />
 
       {/* Signals: OCR + EXIF */}
       {result.signals.ocr_text && (
@@ -460,7 +605,15 @@ export default function AuditResult({ result }: AuditResultProps) {
           >
             OCR EXTRACTED TEXT
           </div>
-          <p style={{ color: "#777", fontSize: "0.78rem", margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+          <p
+            style={{
+              color: "#777",
+              fontSize: "0.78rem",
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              lineHeight: 1.5,
+            }}
+          >
             {result.signals.ocr_text}
           </p>
         </div>
@@ -487,7 +640,15 @@ export default function AuditResult({ result }: AuditResultProps) {
           >
             EXIF METADATA LEAKED
           </div>
-          <pre style={{ color: "#777", fontSize: "0.72rem", margin: 0, fontFamily: "inherit", whiteSpace: "pre-wrap" }}>
+          <pre
+            style={{
+              color: "#777",
+              fontSize: "0.72rem",
+              margin: 0,
+              fontFamily: "inherit",
+              whiteSpace: "pre-wrap",
+            }}
+          >
             {JSON.stringify(result.signals.exif_metadata, null, 2)}
           </pre>
         </div>

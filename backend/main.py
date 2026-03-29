@@ -1,15 +1,26 @@
-import os
-import json
 import asyncio
+import json
+import os
 from datetime import datetime, timezone
+
 import httpx
+from demo import (
+    DEMO_BASELINE_POSTS,
+    get_demo_analysis_result,
+    get_demo_sync_result,
+)
 from dotenv import load_dotenv
+from engine import (
+    analyze_threat,
+    extract_entities,
+    infer_time_context,
+    ingest_data_point,
+    merge_signals,
+    user_footprint,
+)
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-
-from engine import analyze_threat, ingest_data_point, user_footprint, extract_entities, infer_time_context, merge_signals
 from instagram import scrape_instagram
-from demo import get_demo_sync_result, get_demo_analysis_result, DEMO_BASELINE_POSTS, DEMO_DRAFT_POST
 
 DEMO_USERNAME = "aegis_yhack"
 
@@ -17,17 +28,27 @@ load_dotenv()
 
 # ── jsonblob.com: cloud JSON store so Hex can read analysis data ──
 JSONBLOB_ID: str | None = os.getenv("JSONBLOB_ID", None)
+HISTORY_BLOB_ID: str | None = os.getenv("HISTORY_BLOB_ID", None)
 JSONBLOB_BASE = "https://jsonblob.com/api/jsonBlob"
 
 HEX_API_TOKEN = os.getenv("HEX_API_TOKEN", "")
 HEX_PROJECT_ID = os.getenv("HEX_PROJECT_ID", "")
 HEX_API_URL = f"https://app.hex.tech/api/v1/projects/{HEX_PROJECT_ID}/runs"
+HEX_APP_BASE = "https://app.hex.tech/019d3274-b978-7110-8122-c30aea21a224/app/Aegis-032pYjM1wOXFrsi6nXOwag/latest"
+
+# In-memory store for the most recent Hex run result so the frontend can poll it
+_latest_hex_run: dict | None = None
 
 app = FastAPI(title="Aegis — Personal Security Audit")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://app.hex.tech",
+        "https://*.hex.tech",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,13 +82,16 @@ def _build_geo_markers(analysis_result: dict) -> list[dict]:
             name = lm["value"].lower()
             if name in LOCATION_COORDS:
                 lat, lon = LOCATION_COORDS[name]
-                markers.append({
-                    "lat": lat, "lon": lon,
-                    "name": lm["value"].title(),
-                    "type": "landmark",
-                    "risk": lm.get("percentage", 0) / 100.0,
-                    "detail": f"Appears in {lm.get('percentage', 0)}% of posts. {lm.get('classification', '')}",
-                })
+                markers.append(
+                    {
+                        "lat": lat,
+                        "lon": lon,
+                        "name": lm["value"].title(),
+                        "type": "landmark",
+                        "risk": lm.get("percentage", 0) / 100.0,
+                        "detail": f"Appears in {lm.get('percentage', 0)}% of posts. {lm.get('classification', '')}",
+                    }
+                )
                 seen_coords.add((lat, lon))
 
     # From vulnerability map
@@ -75,13 +99,16 @@ def _build_geo_markers(analysis_result: dict) -> list[dict]:
         finding = vuln.get("finding", "").lower()
         for loc_name, (lat, lon) in LOCATION_COORDS.items():
             if loc_name in finding and (lat, lon) not in seen_coords:
-                markers.append({
-                    "lat": lat, "lon": lon,
-                    "name": loc_name.title(),
-                    "type": "vulnerability",
-                    "risk": 0.9 if vuln["severity"] == "critical" else 0.6,
-                    "detail": vuln["finding"][:120],
-                })
+                markers.append(
+                    {
+                        "lat": lat,
+                        "lon": lon,
+                        "name": loc_name.title(),
+                        "type": "vulnerability",
+                        "risk": 0.9 if vuln["severity"] == "critical" else 0.6,
+                        "detail": vuln["finding"][:120],
+                    }
+                )
                 seen_coords.add((lat, lon))
 
     # From entity triplets
@@ -90,13 +117,16 @@ def _build_geo_markers(analysis_result: dict) -> list[dict]:
         if loc in LOCATION_COORDS:
             lat, lon = LOCATION_COORDS[loc]
             if (lat, lon) not in seen_coords:
-                markers.append({
-                    "lat": lat, "lon": lon,
-                    "name": triplet["location"],
-                    "type": "routine",
-                    "risk": triplet.get("confidence", 0.5),
-                    "detail": f"{triplet.get('time', '')} — {triplet.get('activity', '')}",
-                })
+                markers.append(
+                    {
+                        "lat": lat,
+                        "lon": lon,
+                        "name": triplet["location"],
+                        "type": "routine",
+                        "risk": triplet.get("confidence", 0.5),
+                        "detail": f"{triplet.get('time', '')} — {triplet.get('activity', '')}",
+                    }
+                )
                 seen_coords.add((lat, lon))
 
     return markers
@@ -113,52 +143,60 @@ def _build_risk_reductions(analysis_result: dict) -> list[dict]:
     if detected.get("streets"):
         loc_sim = cat_sim.get("locations", 0)
         drop = min(loc_sim * 45, 40)
-        reductions.append({
-            "action": "Remove street names",
-            "detail": f"Remove: {', '.join(detected['streets'])}",
-            "current_risk": round(breach_prob, 1),
-            "reduced_risk": round(max(breach_prob - drop, 5), 1),
-            "risk_drop": round(drop, 1),
-            "category": "location",
-        })
+        reductions.append(
+            {
+                "action": "Remove street names",
+                "detail": f"Remove: {', '.join(detected['streets'])}",
+                "current_risk": round(breach_prob, 1),
+                "reduced_risk": round(max(breach_prob - drop, 5), 1),
+                "risk_drop": round(drop, 1),
+                "category": "location",
+            }
+        )
 
     # Scenario: remove time references
     if detected.get("times"):
         time_sim = cat_sim.get("timestamps", 0)
         drop = min(time_sim * 30, 25)
-        reductions.append({
-            "action": "Remove time references",
-            "detail": f"Remove: {', '.join(detected['times'])}",
-            "current_risk": round(breach_prob, 1),
-            "reduced_risk": round(max(breach_prob - drop, 5), 1),
-            "risk_drop": round(drop, 1),
-            "category": "temporal",
-        })
+        reductions.append(
+            {
+                "action": "Remove time references",
+                "detail": f"Remove: {', '.join(detected['times'])}",
+                "current_risk": round(breach_prob, 1),
+                "reduced_risk": round(max(breach_prob - drop, 5), 1),
+                "risk_drop": round(drop, 1),
+                "category": "temporal",
+            }
+        )
 
     # Scenario: remove activity keywords
     act_sim = cat_sim.get("activities", 0)
     if act_sim > 0.1:
         drop = min(act_sim * 20, 15)
-        reductions.append({
-            "action": "Remove activity keywords",
-            "detail": "Remove: coffee, routine, commute, gym, etc.",
-            "current_risk": round(breach_prob, 1),
-            "reduced_risk": round(max(breach_prob - drop, 5), 1),
-            "risk_drop": round(drop, 1),
-            "category": "activity",
-        })
+        reductions.append(
+            {
+                "action": "Remove activity keywords",
+                "detail": "Remove: coffee, routine, commute, gym, etc.",
+                "current_risk": round(breach_prob, 1),
+                "reduced_risk": round(max(breach_prob - drop, 5), 1),
+                "risk_drop": round(drop, 1),
+                "category": "activity",
+            }
+        )
 
     # Scenario: apply ALL
     total_drop = sum(r["risk_drop"] for r in reductions)
     if reductions:
-        reductions.append({
-            "action": "Apply ALL recommendations",
-            "detail": "Remove all identified location, time, and activity leaks",
-            "current_risk": round(breach_prob, 1),
-            "reduced_risk": round(max(breach_prob - total_drop, 5), 1),
-            "risk_drop": round(total_drop, 1),
-            "category": "all",
-        })
+        reductions.append(
+            {
+                "action": "Apply ALL recommendations",
+                "detail": "Remove all identified location, time, and activity leaks",
+                "current_risk": round(breach_prob, 1),
+                "reduced_risk": round(max(breach_prob - total_drop, 5), 1),
+                "risk_drop": round(total_drop, 1),
+                "category": "all",
+            }
+        )
 
     return reductions
 
@@ -181,7 +219,9 @@ async def _push_to_jsonblob(data: dict) -> None:
                     print(f"[Aegis] Updated jsonblob: {JSONBLOB_BASE}/{JSONBLOB_ID}")
                     return
                 else:
-                    print(f"[Aegis] jsonblob update failed ({resp.status_code}), creating new blob")
+                    print(
+                        f"[Aegis] jsonblob update failed ({resp.status_code}), creating new blob"
+                    )
 
             resp = await client.post(JSONBLOB_BASE, headers=headers, json=data)
             if resp.status_code == 201:
@@ -190,16 +230,87 @@ async def _push_to_jsonblob(data: dict) -> None:
                 if new_id:
                     JSONBLOB_ID = new_id
                     print(f"[Aegis] Created jsonblob: {JSONBLOB_BASE}/{JSONBLOB_ID}")
-                    print(f"[Aegis] *** Save this in your .env: JSONBLOB_ID={JSONBLOB_ID}")
+                    print(
+                        f"[Aegis] *** Save this in your .env: JSONBLOB_ID={JSONBLOB_ID}"
+                    )
                     print(f"[Aegis] *** Hex fetch URL: {JSONBLOB_BASE}/{JSONBLOB_ID}")
             else:
-                print(f"[Aegis] jsonblob create failed: {resp.status_code} {resp.text[:200]}")
+                print(
+                    f"[Aegis] jsonblob create failed: {resp.status_code} {resp.text[:200]}"
+                )
     except Exception as e:
         print(f"[Aegis] jsonblob error: {e}")
 
 
+async def _get_score_history() -> list[dict]:
+    """Fetch the persistent score history from jsonblob."""
+    if not HISTORY_BLOB_ID:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{JSONBLOB_BASE}/{HISTORY_BLOB_ID}",
+                headers={"Accept": "application/json"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"[Aegis] History fetch error: {e}")
+    return []
+
+
+async def _append_score_history(analysis_result: dict) -> list[dict]:
+    """Append current run to the persistent score history blob."""
+    global HISTORY_BLOB_ID
+
+    vuln_map = analysis_result.get("vulnerability_map", [])
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "breach_probability": round(analysis_result.get("breach_probability", 0), 1),
+        "severity_counts": {
+            sev: sum(1 for v in vuln_map if v.get("severity") == sev)
+            for sev in ["critical", "high", "medium", "low"]
+        },
+        "entity_counts": {
+            k: len(v) for k, v in analysis_result.get("detected_entities", {}).items()
+        },
+    }
+
+    history = await _get_score_history()
+    history.append(entry)
+    history = history[-50:]  # cap at 50 runs
+
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            if HISTORY_BLOB_ID:
+                resp = await client.put(
+                    f"{JSONBLOB_BASE}/{HISTORY_BLOB_ID}",
+                    headers=headers,
+                    json=history,
+                )
+                if resp.status_code == 200:
+                    return history
+
+            resp = await client.post(JSONBLOB_BASE, headers=headers, json=history)
+            if resp.status_code == 201:
+                blob_url = resp.headers.get("Location", "")
+                new_id = blob_url.rsplit("/", 1)[-1] if blob_url else None
+                if new_id:
+                    HISTORY_BLOB_ID = new_id
+                    print(
+                        f"[Aegis] *** Save this in your .env: HISTORY_BLOB_ID={HISTORY_BLOB_ID}"
+                    )
+    except Exception as e:
+        print(f"[Aegis] History write error: {e}")
+
+    return history
+
+
 async def trigger_hex_run(analysis_result: dict) -> dict | None:
     """Build dashboard data, push to jsonblob, and trigger Hex run."""
+    global _latest_hex_run
     geo_markers = _build_geo_markers(analysis_result)
     risk_reductions = _build_risk_reductions(analysis_result)
 
@@ -229,9 +340,11 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    print(f"[Aegis] Dashboard data: {len(geo_markers)} geo markers, "
-          f"{len(risk_reductions)} recommendations, "
-          f"breach_prob={dashboard_data['breach_probability']}")
+    print(
+        f"[Aegis] Dashboard data: {len(geo_markers)} geo markers, "
+        f"{len(risk_reductions)} recommendations, "
+        f"breach_prob={dashboard_data['breach_probability']}"
+    )
 
     # Push to jsonblob so Hex can fetch it
     await _push_to_jsonblob(dashboard_data)
@@ -261,24 +374,72 @@ async def trigger_hex_run(analysis_result: dict) -> dict | None:
                 resp = await client.post(HEX_API_URL, headers=headers, json={})
             resp.raise_for_status()
             data = resp.json()
-            return {
+            run_result = {
                 "runId": data.get("runId"),
                 "runUrl": data.get("runUrl"),
                 "runStatusUrl": data.get("runStatusUrl"),
                 "projectId": HEX_PROJECT_ID,
+                "appUrl": HEX_APP_BASE,
             }
+            _latest_hex_run = run_result
+            return run_result
     except httpx.HTTPStatusError as e:
         body = e.response.text[:500] if e.response else ""
         print(f"[Aegis] Hex API {e.response.status_code}: {body}")
-        return {"error": f"{e.response.status_code}: {body}", "projectId": HEX_PROJECT_ID}
+        err_result = {
+            "error": f"{e.response.status_code}: {body}",
+            "projectId": HEX_PROJECT_ID,
+            "appUrl": HEX_APP_BASE,
+        }
+        _latest_hex_run = err_result
+        return err_result
     except Exception as e:
         print(f"[Aegis] Hex API error: {e}")
-        return {"error": str(e), "projectId": HEX_PROJECT_ID}
+        err_result = {
+            "error": str(e),
+            "projectId": HEX_PROJECT_ID,
+            "appUrl": HEX_APP_BASE,
+        }
+        _latest_hex_run = err_result
+        return err_result
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/hex-url")
+def get_hex_url():
+    """Return the Hex dashboard URL and the most recent run info.
+
+    The frontend polls this so the 'Open in Hex' button always points at the
+    latest triggered run rather than the generic app URL.
+    """
+    if _latest_hex_run:
+        return {
+            "appUrl": HEX_APP_BASE,
+            "runUrl": _latest_hex_run.get("runUrl"),
+            "runId": _latest_hex_run.get("runId"),
+            "runStatusUrl": _latest_hex_run.get("runStatusUrl"),
+            "projectId": _latest_hex_run.get("projectId"),
+            "error": _latest_hex_run.get("error"),
+        }
+    return {
+        "appUrl": HEX_APP_BASE,
+        "runUrl": None,
+        "runId": None,
+        "runStatusUrl": None,
+        "projectId": HEX_PROJECT_ID or None,
+        "error": None,
+    }
+
+
+@app.get("/api/score-history")
+async def get_score_history():
+    """Return the full persistent score history."""
+    history = await _get_score_history()
+    return {"history": history}
 
 
 @app.get("/api/exposure-map")
@@ -370,9 +531,11 @@ async def analyze(
             image_bytes = await image.read()
         result = analyze_threat(draft_text=text, image_bytes=image_bytes)
 
-    # Trigger Hex run for all analyzed results (demo + live)
+    # Trigger Hex run + append score history for all analyzed results
     if result.get("status") == "analyzed":
         hex_result = await trigger_hex_run(result)
         result["hex"] = hex_result
+        result["risk_reductions"] = _build_risk_reductions(result)
+        result["score_history"] = await _append_score_history(result)
 
     return result

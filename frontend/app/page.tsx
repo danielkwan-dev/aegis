@@ -51,25 +51,77 @@ export default function Dashboard() {
             Security Dashboard // Privacy Intelligence
           </p>
         </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            color: "#333",
-            fontSize: "0.65rem",
-            letterSpacing: "0.06em",
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
           <div
             style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              backgroundColor: "#16a34a",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              color: "#333",
+              fontSize: "0.65rem",
+              letterSpacing: "0.06em",
             }}
-          />
-          ENGINE ONLINE
+          >
+            <div
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                backgroundColor: "#16a34a",
+              }}
+            />
+            ENGINE ONLINE
+          </div>
+
+          {/* Hex dashboard shortcut */}
+          <a
+            href="https://app.hex.tech/019d3274-b978-7110-8122-c30aea21a224/app/Aegis-032pYjM1wOXFrsi6nXOwag/latest"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.35rem",
+              padding: "0.3rem 0.75rem",
+              backgroundColor: "#06b6d412",
+              border: "1px solid #06b6d430",
+              borderRadius: "5px",
+              color: "#06b6d4",
+              fontSize: "0.6rem",
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textDecoration: "none",
+              textTransform: "uppercase",
+              whiteSpace: "nowrap",
+              transition: "background-color 0.2s ease, border-color 0.2s ease",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                "#06b6d422";
+              (e.currentTarget as HTMLAnchorElement).style.borderColor =
+                "#06b6d460";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.backgroundColor =
+                "#06b6d412";
+              (e.currentTarget as HTMLAnchorElement).style.borderColor =
+                "#06b6d430";
+            }}
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            Hex Dashboard ↗
+          </a>
         </div>
       </div>
 
