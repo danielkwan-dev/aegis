@@ -59,8 +59,7 @@ Standard security tooling covers network intrusion, malware, and credential thef
 - OSINT scraping — Instagram via Instaloader, OCR via Tesseract, EXIF via Pillow
 - TF-IDF cosine similarity threat scoring across three signal categories
 - KMeans behavioral clustering and entity triplet detection
-- Force-directed Stalker's Web graph of entity relationships
-- Hex.tech API integration — automated intelligence brief on every analysis run
+- Hex.tech API integration — automated intelligence brief on every analysis run and "Stalker's Web" graph of entity relationships
 - Async background processing — results return in under one second
 - Persistent breach probability history via JSONBlob
 
