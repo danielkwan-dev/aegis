@@ -1,5 +1,5 @@
 # Aegis — Personal Privacy Intelligence Shield
-### YaleHack Finalist 2026 
+### YHack Finalist 2026 @ Yale University
 
 # Authors
 Daniel Kwan (@danielkwan-dev)
