@@ -1,4 +1,4 @@
-# Aegis — Personal Privacy Intelligence Shield
+# Aegis | Personal Privacy Intelligence Shield
 ### YHack Finalist 2026 @ Yale University
 
 # Authors
