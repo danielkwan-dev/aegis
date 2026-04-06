@@ -118,7 +118,7 @@ HISTORY_BLOB_ID=              # auto-created on first run
 
 Use handle **`@aegis_yhack`** — no real Instagram account needed. Then analyze:
 
-> "Grabbing my usual morning coffee on Market Street before work"
+> "Grabbing my usual morning coffee down on Market Street"
 
 Triggers a Critical-level breach detection showing how one sentence, cross-referenced against a baseline corpus, reconstructs a full daily routine.
 
