@@ -5,9 +5,9 @@
 Daniel Kwan (@danielkwan-dev)
 
 # About
-> "We don't need to hack your phone. We just need to read your Instagram."
+> "We don't need to follow you home. We just need to read your Instagram."
 
-Aegis is a real-time OSINT and machine learning tool that detects **Identity Links** — cross-post patterns of location, time, and activity that allow a threat actor to reconstruct your daily routine from public social media alone.
+Aegis is a real-time OSINT (Open-Source Intelligence) and machine learning tool that detects **Identity Links** — cross-post patterns of location, time, and activity that allow a threat actor to reconstruct your daily routine from public social media alone.
 
 Individual posts are not the vulnerability. The statistical pattern across dozens of posts is.
 
