@@ -11,8 +11,6 @@ Daniel Kwan (@danielkwan-dev)
 
 Aegis is a real-time OSINT (Open-Source Intelligence) and machine learning tool that detects **Identity Links** — cross-post patterns of location, time, and activity that allow a threat actor to reconstruct your daily routine from public social media alone.
 
-Individual posts are not the vulnerability. The statistical pattern across your posts are.
-
 ---
 # Demo
 https://youtu.be/Nf_50lff9Rc
