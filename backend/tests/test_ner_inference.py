@@ -71,6 +71,36 @@ def test_extractor_unavailable_when_model_dir_does_not_exist():
     assert extractor.available is False
 
 
+def test_extractor_loads_optimum_quantized_filename(tmp_path, monkeypatch):
+    # optimum's ORTQuantizer names its output "model_quantized.onnx", not
+    # the "model.onnx" name a naive glob might assume -- the loader must
+    # recognize both real Colab output shapes.
+    (tmp_path / "model_quantized.onnx").write_bytes(b"fake-onnx-bytes")
+    (tmp_path / "tokenizer.json").write_text("{}")
+
+    calls = {}
+
+    class _FakeOrt:
+        class InferenceSession:
+            def __init__(self, path, providers=None):
+                calls["onnx_path"] = path
+
+    class _FakeTokenizerModule:
+        class Tokenizer:
+            @staticmethod
+            def from_file(path):
+                calls["tokenizer_path"] = path
+                return object()
+
+    monkeypatch.setitem(__import__("sys").modules, "onnxruntime", _FakeOrt)
+    monkeypatch.setitem(__import__("sys").modules, "tokenizers", _FakeTokenizerModule)
+
+    extractor = NERExtractor(model_dir=tmp_path)
+
+    assert extractor.available is True
+    assert calls["onnx_path"].endswith("model_quantized.onnx")
+
+
 class _FakeInput:
     def __init__(self, name):
         self.name = name

@@ -122,9 +122,14 @@ class NERExtractor:
         if not self._model_dir or not self._model_dir.exists():
             return
 
-        onnx_path = self._model_dir / "model.onnx"
+        # optimum's ORTQuantizer names its output "model_quantized.onnx", not
+        # "model.onnx" -- check both rather than assuming a single fixed name.
+        onnx_path = next(
+            (p for p in (self._model_dir / "model.onnx", self._model_dir / "model_quantized.onnx") if p.exists()),
+            None,
+        )
         tokenizer_path = self._model_dir / "tokenizer.json"
-        if not onnx_path.exists() or not tokenizer_path.exists():
+        if onnx_path is None or not tokenizer_path.exists():
             return
 
         import onnxruntime as ort

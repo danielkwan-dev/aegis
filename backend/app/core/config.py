@@ -19,9 +19,10 @@ class Settings(BaseSettings):
     vision_model_path: str | None = None
 
     # Directory containing the fine-tuned DistilBERT NER model, exported to
-    # ONNX + quantized (expects model.onnx + tokenizer.json inside). Unset
-    # until the Colab training run in ml_training/ner/ has produced one —
-    # entity extraction falls back to regex/keyword matching until then.
+    # ONNX + quantized (expects tokenizer.json + either model.onnx or
+    # model_quantized.onnx inside -- optimum's ORTQuantizer names its output
+    # the latter). Unset until the Colab training run in ml_training/ner/
+    # has produced one — entity extraction falls back to regex until then.
     ner_model_dir: str | None = None
 
     session_cookie_name: str = "aegis_session_id"

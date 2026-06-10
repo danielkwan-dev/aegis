@@ -1,126 +1,144 @@
-# Aegis | Personal Privacy Intelligence Shield
-### YHack 2026 Winner @ Yale University
+# Aegis | Personal Privacy Intelligence Engine
 
-# Devpost
-https://devpost.com/software/aegis-68rmo0
+Aegis detects **Identity Links** — cross-post patterns of location, time, and activity that let a threat actor reconstruct someone's daily routine from public social media posts alone. It started as a solo hackathon project and has since been rebuilt from the ground up into a real, tested, fine-tuned-ML system.
 
-# Authors
-Daniel Kwan (@danielkwan-dev)
+**Devpost:** https://devpost.com/software/aegis-68rmo0
 
-# About
+**Hackathon Demo Video:** https://youtu.be/Nf_50lff9Rc
+*(This demo shows the original YHack 2026 hackathon build — live Instagram scraping, a Hex.tech-embedded dashboard, JSONBlob persistence. The architecture below reflects a full post-hackathon rebuild; see [What changed since the hackathon](#what-changed-since-the-hackathon).)*
 
-Aegis is a real-time OSINT (Open-Source Intelligence) and machine learning tool that detects **Identity Links** — cross-post patterns of location, time, and activity that allow a threat actor to reconstruct your daily routine from public social media alone.
+**Author:** Daniel Kwan ([@danielkwan-dev](https://github.com/danielkwan-dev))
 
 ---
-# Demo
-https://youtu.be/Nf_50lff9Rc
 
 ## The Problem
 
-Standard security tooling covers network intrusion, malware, and credential theft. Nothing addresses the slow-burn threat of behavioral pattern exposure through social media. A motivated adversary — stalker, investigator, or state actor — does not need to compromise a single system. They just need to read your feed.
+Standard security tooling covers network intrusion, malware, and credential theft. Nothing addresses the slow-burn threat of behavioral pattern exposure through social media. A motivated adversary — stalker, investigator, or state actor — doesn't need to compromise a system. They just need to read a feed.
+
+| Adversary | What Aegis Detects |
+|---|---|
+| Stalker / Harasser | Home neighbourhood, daily schedule, recurring locations |
+| Corporate Investigator | Workplace, travel patterns, relationship network |
+| State-Level Actor | Full behavioral profile, vulnerability windows, predictive location |
+
+**Attack vectors modeled:**
+- Location triangulation from cross-post geography
+- Temporal pattern analysis from posting-time consistency
+- OCR side-channel — location data embedded in image backgrounds (street signs, storefronts)
+- EXIF geolocation — GPS coordinates embedded in image metadata
+- Routine prediction from historical behavioral anchors
 
 ---
 
 ## Machine Learning Pipeline
 
-1. **Signal Extraction** — Named entity recognition (regex + domain lexicon) pulls streets, landmarks, businesses, and temporal expressions from post text. Tesseract OCR extracts text from image backgrounds. Pillow pulls GPS coordinates and timestamps from EXIF metadata.
+1. **Entity extraction** — a fine-tuned **DistilBERT** token-classification model (streets, landmarks, businesses, times, activities), trained via weak supervision and hand-corrected gold labels. Falls back automatically to the original regex/keyword extractor when no trained model is configured, so the app is never non-functional.
+2. **Vision cascade** — a fine-tuned **YOLOv8n** signage/storefront detector runs a full **detect → crop → preprocess → OCR → NER** pipeline: find signage in a photo, crop and contrast-enhance each region, OCR each crop individually (sharper than OCR-ing the whole image), then run entity extraction on the result.
+3. **EXIF + OCR signal fusion** — Pillow extracts GPS/timestamp metadata; Tesseract OCR reads any text baked into an image.
+4. **Geocoding** — free-text locations resolved to coordinates via Nominatim (OpenStreetMap), Postgres-cached to respect rate limits.
+5. **Geospatial risk clustering** — DBSCAN + Haversine distance clusters GPS coordinates into two distinct signal types: dense repeat-visit clusters ("**Routine Exposure**" — predictable, high risk) vs. one-off outliers ("**Anomalous Disclosure**" — informationally sensitive but not a pattern). These are deliberately not conflated into one score.
+6. **TF-IDF similarity scoring** — three independent TF-IDF vectorizers (locations, timestamps, activities), cosine-similarity-scored against a session's baseline post history to produce a weighted breach-probability score (0–100%).
+7. **Entity triplet detection** — co-occurrence analysis finds recurring (time, location, activity) triplets across posts; consistent-timing triplets become static-landmark findings.
+8. **K-Means routine clustering** — baseline posts clustered on extracted feature vectors to identify distinct behavioral routines and their temporal predictability.
+9. **Vulnerability map + conclusion narrative** — every detected pattern becomes a structured finding (severity, evidence count, risk-reduction-if-removed), synthesized into a readable narrative.
 
-2. **Baseline Corpus** — All scraped posts are ingested into an in-memory UserFootprint document store, which becomes the training corpus for threat detection.
+### Trained model results
 
-3. **TF-IDF Similarity Scoring** — Three independent TF-IDF vectorizers (locations, timestamps, activities) are trained on the baseline corpus. A draft post is transformed into the same vector space and scored via cosine similarity against every baseline document, producing a weighted breach probability score (0–100%).
+| Model | Metric | Result | Deployed size |
+|---|---|---|---|
+| NER (DistilBERT, fine-tuned) | Entity F1 | 0.851 | 265.6MB |
+| NER (int8 quantized, ONNX) | Entity F1 | 0.832 | **66.8MB** (4.0x smaller, ~34% faster) |
+| Vision (YOLOv8n, fine-tuned) | mAP50 / mAP50-95 | 0.567 / 0.333 | 12.3MB |
+| Vision (int8 quantized, ONNX) | — | — | **3.4MB** (3.6x smaller) |
 
-4. **Entity Triplet Detection** — Co-occurrence analysis identifies recurring (time, location, activity) triplets across posts. Triplets with consistent timing are classified as static landmarks — high-confidence predictions of where the subject will be and when.
+NER per-category F1: STREET 0.883, TIME 0.923, BUSINESS 0.900, ACTIVITY 0.859, LANDMARK 0.273 (weak — only 26 gold examples for that category, a known limitation). Both models were trained on a free Colab T4 GPU, exported to ONNX, quantized, and are served via `onnxruntime` — the serving app never depends on `torch`/`transformers` at request time, only at training time.
 
-5. **KMeans Routine Clustering** — Baseline posts are clustered on extracted feature vectors to identify distinct behavioral routines and score each for temporal predictability.
+Both models degrade gracefully: if no trained weights are configured, the app automatically falls back to the regex baseline (NER) or whole-image OCR (vision) — it's fully functional either way, just less accurate.
 
-6. **Vulnerability Map** — Each detected pattern becomes a structured finding: severity rating (Critical / High / Medium / Low), evidence count, and quantified risk reduction showing exactly how much the score drops if a specific signal is removed.
-
----
-
-## Cybersecurity Threat Model
-
-| Adversary | What Aegis Detects |
-|-----------|-------------------|
-| Stalker / Harasser | Home neighbourhood, daily schedule, recurring locations |
-| Corporate Investigator | Workplace, travel patterns, relationship network |
-| State-Level Actor | Full behavioral profile, vulnerability windows, predictive location |
-
-**Attack vectors modelled:**
-- Location triangulation from cross-post geography
-- Temporal pattern analysis from posting time consistency
-- OCR side-channel — location data embedded in image backgrounds
-- EXIF geolocation — GPS coordinates in image metadata
-- Routine prediction from historical behavioral anchors
+Full training pipeline (weak-label bootstrapping, hand-correction workflow, Colab training steps) documented in [`backend/ml_training/COLAB.md`](backend/ml_training/COLAB.md).
 
 ---
 
-## Key Features
+## Architecture
 
-- OSINT scraping — Instagram via Instaloader, OCR via Tesseract, EXIF via Pillow
-- TF-IDF cosine similarity threat scoring across three signal categories
-- KMeans behavioral clustering and entity triplet detection
-- Hex.tech API integration — automated intelligence brief on every analysis run and "Stalker's Web" graph of entity relationships
-- Async background processing — results return in under one second
-- Persistent breach probability history via JSONBlob
+- **Backend**: Python, FastAPI, layered architecture (`api/` routers → `services/` business logic → `db/`/`models/` persistence), PostgreSQL via SQLAlchemy, Docker Compose for local dev. Per-session state (not a global in-memory store) — each analysis session's footprint is scoped and persisted.
+- **Frontend**: Next.js 14, TypeScript, TailwindCSS, Framer Motion, `react-force-graph-2d` for the entity-relationship "Stalker's Web" graph.
+- **Testing**: 61 pytest unit tests. ML inference, external HTTP calls, and geospatial math are all dependency-injected and unit-testable without live models, weights, or network access.
+
+### Data ingestion — no live scraping
+
+The original hackathon build scraped live Instagram profiles via Instaloader, which violates Instagram's Terms of Service. That's gone. Ingestion is now:
+- **Official data export** — upload your own Instagram "Download Your Data" `.zip`, parsed and bulk-ingested (`/api/ingest/export`).
+- **Manual entry** — a single caption/photo for live demos (`/api/ingest/manual`).
+
+---
+
+## What changed since the hackathon
+
+Aegis won YHack 2026, but the original build had real hackathon debt: hardcoded coordinate lookups, a hardcoded Tesseract path, a canned-response demo mode, two third-party sponsor-tool dependencies (Hex.tech, JSONBlob) standing in for a real database, a dead duplicate frontend scaffold, and live Instagram scraping. Everything above reflects a deliberate rebuild:
+
+| Area | Hackathon build | Current build |
+|---|---|---|
+| Data ingestion | Live Instagram scraping (Instaloader) | Official data export + manual entry (ToS-compliant) |
+| Entity extraction | Regex + hardcoded lexicon only | Fine-tuned DistilBERT NER, regex as fallback |
+| Image signal extraction | Whole-image OCR only | YOLOv8-detected crops → OCR → NER cascade |
+| Geospatial clustering | Fixed-degree coordinate bucketing | DBSCAN + Haversine, dual risk signals |
+| Location resolution | Hardcoded 10-entry coordinate dict | Nominatim geocoding, Postgres-cached |
+| Persistence | In-memory store + JSONBlob | PostgreSQL |
+| Analytics dashboard | Hex.tech notebook embed (backend round-trip) | Backend dependency fully removed — analysis runs synchronously, no external call |
+| Testing | None | 61 unit tests |
+
+**Known limitation, not yet addressed:** the frontend's `HexDashboard.tsx` component is still imported and rendered in `AuditResult.tsx`, hardcoded to the original author's Hex.tech embed URL. It's now orphaned — the backend no longer sends it data — and needs to be removed or replaced with an in-house visualization built on the data the API already returns. Everything else in the table above is done.
 
 ---
 
 ## Tech Stack
 
-**Machine Learning**
-- scikit-learn 1.6 — TF-IDF vectorization, cosine similarity, KMeans
-- NumPy 2.2 — feature vector construction
-- Pytesseract 0.3 — OCR pipeline
-- Pillow 11.1 — image processing, EXIF extraction
+**Serving app (backend)**
+- FastAPI, Uvicorn, SQLAlchemy, PostgreSQL, Docker Compose
+- `onnxruntime` + `tokenizers` — ML inference (deliberately no `torch`/`transformers` at serving time)
+- `pytesseract` + Pillow — OCR and EXIF extraction
+- `httpx` — Nominatim geocoding client
+- scikit-learn, NumPy — TF-IDF similarity, K-Means clustering, DBSCAN spatial clustering
 
-**Backend**
-- FastAPI 0.111 + Uvicorn 0.29
-- Instaloader 4.13 — Instagram scraping
-- httpx — async HTTP for Hex API and JSONBlob
+**ML training** (`backend/ml_training/`, separate venv — not a serving dependency)
+- `transformers`, `accelerate`, `datasets`, `seqeval` — DistilBERT fine-tuning
+- `ultralytics`, `roboflow` — YOLOv8n fine-tuning
+- `optimum[onnxruntime]` — ONNX export + int8 quantization
+- Trained on Google Colab (free T4 GPU), models published to Hugging Face Hub
 
 **Frontend**
-- Next.js 14.2, TypeScript 5.4
-- Framer Motion, react-force-graph-2d, Canvas API
-
-**External Services**
-- Hex.tech — automated notebook runs via API, embedded OPSEC dashboard
-- JSONBlob — serverless JSON persistence
+- Next.js 14, TypeScript, TailwindCSS, Framer Motion, `react-force-graph-2d`
 
 ---
 
 ## Getting Started
 
-**Prerequisites:** Node.js 18+, Python 3.11+, Tesseract OCR installed locally
+**Prerequisites:** Docker, Node.js 18+, Python 3.11+, Tesseract OCR installed locally.
 
 ```bash
-# Backend
+# Backend (Postgres + API)
 cd backend
+docker compose up -d db
 python -m venv venv && venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000
 
 # Frontend
 cd frontend
 npm install && npm run dev
 ```
 
-Create `backend/.env`:
+Create `backend/.env` (see `backend/.env.example`):
 ```
-HEX_API_TOKEN=your_hex_api_token
-HEX_PROJECT_ID=your_hex_project_id
-JSONBLOB_ID=                  # auto-created on first run
-HISTORY_BLOB_ID=              # auto-created on first run
+DATABASE_URL=postgresql+psycopg2://aegis:aegis@localhost:5432/aegis
+TESSERACT_CMD=                # leave unset to auto-detect
+VISION_MODEL_PATH=            # path to a fine-tuned YOLOv8n ONNX file, optional
+NER_MODEL_DIR=                # path to a fine-tuned NER model dir, optional
+SESSION_COOKIE_NAME=aegis_session_id
+CORS_ORIGINS=["http://localhost:3000","http://localhost:3001"]
 ```
-
----
-
-## Demo Mode
-
-Use handle **`@aegis_yhack`** — no real Instagram account needed. Then analyze:
-
-> "Grabbing my usual morning coffee down on Market Street"
-
-Triggers a Critical-level breach detection showing how one sentence, cross-referenced against a baseline corpus, reconstructs a full daily routine.
+Both ML paths are optional — the app runs fully functional on the regex/whole-image-OCR fallback path with either or both unset.
 
 ---
 
@@ -129,23 +147,34 @@ Triggers a Critical-level breach detection showing how one sentence, cross-refer
 ```
 aegis/
 ├── backend/
-│   ├── main.py        # FastAPI endpoints, background tasks
-│   ├── engine.py      # ML threat analysis engine (~1800 lines)
-│   ├── instagram.py   # Instagram scraping
-│   └── demo.py        # Pre-loaded demo data
+│   ├── app/
+│   │   ├── api/routers/       # ingestion.py, analysis.py, dashboard.py
+│   │   ├── services/          # analysis, entity_extraction, ner_inference,
+│   │   │                      # detection (vision), vision (OCR cascade),
+│   │   │                      # spatial (DBSCAN), correlation, clustering,
+│   │   │                      # similarity, geocode, graph, vulnerability,
+│   │   │                      # conclusion, ingestion
+│   │   ├── db/                # SQLAlchemy session + repository
+│   │   ├── models/            # ORM models
+│   │   └── core/config.py     # pydantic-settings
+│   ├── ml_training/
+│   │   ├── ner/                # weak labeling, hand-correction, training,
+│   │   │                       # ONNX export, benchmark
+│   │   ├── vision/              # dataset download, YOLOv8n training
+│   │   └── COLAB.md            # step-by-step training instructions
+│   ├── tests/                  # 61 pytest unit tests
+│   └── docker-compose.yml
 └── frontend/
+    ├── app/                     # Next.js app router
     └── components/
-        ├── SimulateForm.tsx      # Instagram sync + analysis
-        ├── AuditResult.tsx       # Threat report
-        ├── HexDashboard.tsx      # Hex embed panel
-        ├── StalkerWeb.tsx        # Entity relationship graph
-        ├── MatrixRain.tsx        # Animated side panels
-        ├── RiskGauge.tsx         # Breach probability gauge
-        └── ScoreTracker.tsx      # Score history
+        ├── SimulateForm.tsx      # ingestion + analysis trigger
+        ├── AuditResult.tsx       # threat report
+        ├── StalkerWeb.tsx        # entity relationship graph
+        ├── RiskGauge.tsx         # breach probability gauge
+        ├── ScoreTracker.tsx      # score history
+        └── HexDashboard.tsx      # orphaned — see Known Limitations above
 ```
 
 ---
 
-**YaleHack 2026 — Solo project by Daniel Kwan**
-
-*For educational and personal security purposes only.*
+*Started as a solo project at YaleHack 2026. For educational and personal security purposes only.*
