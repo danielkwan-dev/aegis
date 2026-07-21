@@ -1,5 +1,5 @@
 # Aegis | Personal Privacy Intelligence Shield
-### YHack 2026 Finalist @ Yale University
+### YHack 2026 Winner @ Yale University
 
 # Devpost
 https://devpost.com/software/aegis-68rmo0
