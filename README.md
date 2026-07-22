@@ -1,19 +1,16 @@
 # Aegis | Personal Privacy Intelligence Engine
 
-Aegis detects **Identity Links** — cross-post patterns of location, time, and activity that let a threat actor reconstruct someone's daily routine from public social media posts alone. It started as a solo hackathon project and has since been rebuilt from the ground up into a real, tested, fine-tuned-ML system.
+Aegis detects **Identity Links** — cross-post patterns of location, time, and activity that let a threat actor reconstruct someone's daily routine from public posts alone. Built solo for YaleHack 2026, then rebuilt from the ground up into a tested, fine-tuned-ML system.
 
 **Devpost:** https://devpost.com/software/aegis-68rmo0
-
-**Hackathon Demo Video:** https://youtu.be/Nf_50lff9Rc
-*(This demo shows the original YHack 2026 hackathon build — live Instagram scraping, a Hex.tech-embedded dashboard, JSONBlob persistence. The architecture below reflects a full post-hackathon rebuild; see [What changed since the hackathon](#what-changed-since-the-hackathon).)*
-
+**Hackathon Demo Video:** https://youtu.be/Nf_50lff9Rc *(shows the original hackathon build — live scraping, a Hex.tech dashboard, JSONBlob persistence. See [What changed since the hackathon](#what-changed-since-the-hackathon) for the rebuild.)*
 **Author:** Daniel Kwan ([@danielkwan-dev](https://github.com/danielkwan-dev))
 
 ---
 
 ## Screenshots
 
-Current rebuilt frontend, running live against the real backend and fine-tuned NER model:
+Live from the rebuilt frontend, running against the real backend and fine-tuned NER model:
 
 ![Analysis result — breach gauge, severity-grouped findings, and the entity relationship graph](docs/screenshots/analysis-result.png)
 
@@ -23,7 +20,7 @@ Current rebuilt frontend, running live against the real backend and fine-tuned N
 
 ## The Problem
 
-Standard security tooling covers network intrusion, malware, and credential theft. Nothing addresses the slow-burn threat of behavioral pattern exposure through social media. A motivated adversary — stalker, investigator, or state actor — doesn't need to compromise a system. They just need to read a feed.
+Standard security tooling covers network intrusion, malware, and credential theft — nothing addresses the slow-burn threat of behavioral pattern exposure through social media. A stalker, investigator, or state actor doesn't need to compromise a system. They just need to read a feed.
 
 | Adversary | What Aegis Detects |
 |---|---|
@@ -31,26 +28,21 @@ Standard security tooling covers network intrusion, malware, and credential thef
 | Corporate Investigator | Workplace, travel patterns, relationship network |
 | State-Level Actor | Full behavioral profile, vulnerability windows, predictive location |
 
-**Attack vectors modeled:**
-- Location triangulation from cross-post geography
-- Temporal pattern analysis from posting-time consistency
-- OCR side-channel — location data embedded in image backgrounds (street signs, storefronts)
-- EXIF geolocation — GPS coordinates embedded in image metadata
-- Routine prediction from historical behavioral anchors
+**Attack vectors modeled:** location triangulation from cross-post geography, temporal pattern analysis from posting-time consistency, OCR side-channel leaks (street signs, storefronts in photo backgrounds), EXIF geolocation, and routine prediction from historical anchors.
 
 ---
 
 ## Machine Learning Pipeline
 
-1. **Entity extraction** — a fine-tuned **DistilBERT** token-classification model (streets, landmarks, businesses, times, activities), trained via weak supervision and hand-corrected gold labels. Falls back automatically to the original regex/keyword extractor when no trained model is configured, so the app is never non-functional.
-2. **Vision cascade** — a fine-tuned **YOLOv8n** signage/storefront detector runs a full **detect → crop → preprocess → OCR → NER** pipeline: find signage in a photo, crop and contrast-enhance each region, OCR each crop individually (sharper than OCR-ing the whole image), then run entity extraction on the result.
-3. **EXIF + OCR signal fusion** — Pillow extracts GPS/timestamp metadata; Tesseract OCR reads any text baked into an image.
-4. **Geocoding** — free-text locations resolved to coordinates via Nominatim (OpenStreetMap), Postgres-cached to respect rate limits.
-5. **Geospatial risk clustering** — DBSCAN + Haversine distance clusters GPS coordinates into two distinct signal types: dense repeat-visit clusters ("**Routine Exposure**" — predictable, high risk) vs. one-off outliers ("**Anomalous Disclosure**" — informationally sensitive but not a pattern). These are deliberately not conflated into one score.
-6. **TF-IDF similarity scoring** — three independent TF-IDF vectorizers (locations, timestamps, activities), cosine-similarity-scored against a session's baseline post history to produce a weighted breach-probability score (0–100%).
-7. **Entity triplet detection** — co-occurrence analysis finds recurring (time, location, activity) triplets across posts; consistent-timing triplets become static-landmark findings.
-8. **K-Means routine clustering** — baseline posts clustered on extracted feature vectors to identify distinct behavioral routines and their temporal predictability.
-9. **Vulnerability map + conclusion narrative** — every detected pattern becomes a structured finding (severity, evidence count, risk-reduction-if-removed), synthesized into a readable narrative.
+1. **Entity extraction** — fine-tuned **DistilBERT** token classification (streets, landmarks, businesses, times, activities), trained via weak supervision + hand-corrected gold labels. Falls back to the regex/keyword extractor when no trained model is configured, so the app is never non-functional.
+2. **Vision cascade** — fine-tuned **YOLOv8n** signage detector driving a **detect → crop → preprocess → OCR → NER** pipeline: find signage, crop and contrast-enhance each region, OCR each crop individually, then extract entities.
+3. **EXIF + OCR signal fusion** — Pillow for GPS/timestamp metadata, Tesseract for any text baked into an image.
+4. **Geocoding** — free-text locations resolved via Nominatim (OpenStreetMap), Postgres-cached to respect rate limits.
+5. **Geospatial risk clustering** — DBSCAN + Haversine distance splits GPS coordinates into two distinct signals: dense repeat-visit clusters ("**Routine Exposure**," predictable/high-risk) vs. one-off outliers ("**Anomalous Disclosure**," sensitive but not a pattern) — deliberately not conflated into one score.
+6. **TF-IDF similarity scoring** — three vectorizers (locations, timestamps, activities), cosine-scored against baseline history for a weighted breach-probability score (0–100%).
+7. **Entity triplet detection** — co-occurrence analysis finds recurring (time, location, activity) triplets; consistent-timing ones become static-landmark findings.
+8. **K-Means routine clustering** — baseline posts clustered to surface distinct behavioral routines and their predictability.
+9. **Vulnerability map + conclusion narrative** — every finding gets a severity, evidence count, and risk-reduction-if-removed, synthesized into a readable narrative.
 
 ### Trained model results
 
@@ -61,31 +53,22 @@ Standard security tooling covers network intrusion, malware, and credential thef
 | Vision (YOLOv8n, fine-tuned) | mAP50 / mAP50-95 | 0.567 / 0.333 | 12.3MB |
 | Vision (int8 quantized, ONNX) | — | — | **3.4MB** (3.6x smaller) |
 
-NER per-category F1: STREET 0.883, TIME 0.923, BUSINESS 0.900, ACTIVITY 0.859, LANDMARK 0.273 (weak — only 26 gold examples for that category, a known limitation). Both models were trained on a free Colab T4 GPU, exported to ONNX, quantized, and are served via `onnxruntime` — the serving app never depends on `torch`/`transformers` at request time, only at training time.
-
-Both models degrade gracefully: if no trained weights are configured, the app automatically falls back to the regex baseline (NER) or whole-image OCR (vision) — it's fully functional either way, just less accurate.
-
-Full training pipeline (weak-label bootstrapping, hand-correction workflow, Colab training steps) documented in [`backend/ml_training/COLAB.md`](backend/ml_training/COLAB.md).
+NER per-category F1: STREET 0.883, TIME 0.923, BUSINESS 0.900, ACTIVITY 0.859, LANDMARK 0.273 (weak — only 26 gold examples, a known limitation). Both trained on a free Colab T4 GPU, exported to ONNX + quantized. If no trained weights are configured, the app falls back to the regex baseline / whole-image OCR automatically — fully functional either way, just less accurate. Full training pipeline (weak-label bootstrapping, hand-correction, Colab steps) in [`backend/ml_training/COLAB.md`](backend/ml_training/COLAB.md).
 
 ---
 
 ## Architecture
 
-- **Backend**: Python, FastAPI, layered architecture (`api/` routers → `services/` business logic → `db/`/`models/` persistence), PostgreSQL via SQLAlchemy, Docker Compose for local dev. Per-session state (not a global in-memory store) — each analysis session's footprint is scoped and persisted.
-- **Frontend**: Next.js 14, TypeScript, TailwindCSS, Framer Motion, `shadcn/ui` components, TanStack Query for server state, Recharts for the score-history chart, `react-force-graph-2d` for the entity-relationship graph visualization.
-- **Testing**: 63 pytest unit tests on the backend. ML inference, external HTTP calls, and geospatial math are all dependency-injected and unit-testable without live models, weights, or network access. The frontend rebuild carries its own 38 Vitest/Testing Library unit tests covering components, hooks, and the composed page.
-
-### Data ingestion — no live scraping
-
-The original hackathon build scraped live Instagram profiles via Instaloader, which violates Instagram's Terms of Service. That's gone. Ingestion is now:
-- **Official data export** — upload your own Instagram "Download Your Data" `.zip`, parsed and bulk-ingested (`/api/ingest/export`).
-- **Manual entry** — a single caption/photo for live demos (`/api/ingest/manual`).
+- **Backend** — Python/FastAPI, layered (`api/` routers → `services/` business logic → `db/`/`models/` persistence), PostgreSQL + SQLAlchemy, Docker Compose. Per-session state (not a global store). Serves ML inference via `onnxruntime`/`tokenizers` only — no `torch`/`transformers` at request time; those stay in `ml_training/`'s separate venv (`transformers`, `ultralytics`, `optimum`), which trains on Colab and publishes to Hugging Face Hub.
+- **Frontend** — Next.js 14, TypeScript, TailwindCSS, `shadcn/ui`, TanStack Query, Recharts, `react-force-graph-2d`, Framer Motion.
+- **Testing** — 63 backend (pytest) + 38 frontend (Vitest/RTL) unit tests, all dependency-injected — no live models, weights, or network needed to run them.
+- **Ingestion** — no live scraping (the original build's Instaloader use violated Instagram's ToS). Now: official Instagram data export (`.zip`, bulk) or manual single-post entry, both via `/api/ingest/*`.
 
 ---
 
 ## What changed since the hackathon
 
-Aegis won YHack 2026, but the original build had real hackathon debt: hardcoded coordinate lookups, a hardcoded Tesseract path, a canned-response demo mode, two third-party sponsor-tool dependencies (Hex.tech, JSONBlob) standing in for a real database, a dead duplicate frontend scaffold, and live Instagram scraping. Everything above reflects a deliberate rebuild:
+Aegis won YaleHack 2026, but shipped with real hackathon debt — hardcoded lookups, sponsor-tool dependencies (Hex.tech, JSONBlob) standing in for a database, a dead duplicate frontend scaffold, and ToS-violating scraping. Rebuilt end to end:
 
 | Area | Hackathon build | Current build |
 |---|---|---|
@@ -95,32 +78,8 @@ Aegis won YHack 2026, but the original build had real hackathon debt: hardcoded 
 | Geospatial clustering | Fixed-degree coordinate bucketing | DBSCAN + Haversine, dual risk signals |
 | Location resolution | Hardcoded 10-entry coordinate dict | Nominatim geocoding, Postgres-cached |
 | Persistence | In-memory store + JSONBlob | PostgreSQL |
-| Analytics dashboard | Hex.tech notebook embed (backend round-trip) | Backend dependency fully removed — analysis runs synchronously, no external call |
+| Analytics dashboard | Hex.tech notebook embed (backend round-trip) | In-house UI, no external call in the critical path |
 | Testing | None | 63 backend + 38 frontend unit tests |
-
-This frontend rebuild removed the orphaned `HexDashboard.tsx` entirely and replaced it with an in-house UI (see `docs/superpowers/specs/2026-08-21-frontend-rebuild-design.md`). Every item in the table above is now done.
-
----
-
-## Tech Stack
-
-**Serving app (backend)**
-- FastAPI, Uvicorn, SQLAlchemy, PostgreSQL, Docker Compose
-- `onnxruntime` + `tokenizers` — ML inference (deliberately no `torch`/`transformers` at serving time)
-- `pytesseract` + Pillow — OCR and EXIF extraction
-- `httpx` — Nominatim geocoding client
-- scikit-learn, NumPy — TF-IDF similarity, K-Means clustering, DBSCAN spatial clustering
-
-**ML training** (`backend/ml_training/`, separate venv — not a serving dependency)
-- `transformers`, `accelerate`, `datasets`, `seqeval` — DistilBERT fine-tuning
-- `ultralytics`, `roboflow` — YOLOv8n fine-tuning
-- `optimum[onnxruntime]` — ONNX export + int8 quantization
-- Trained on Google Colab (free T4 GPU), models published to Hugging Face Hub
-
-**Frontend**
-- Next.js 14, TypeScript, TailwindCSS, Framer Motion
-- `shadcn/ui` — component primitives; TanStack Query — server state/caching for API calls
-- Recharts — score-history chart; `react-force-graph-2d` — entity-relationship graph visualization
 
 ---
 
@@ -141,18 +100,17 @@ cd frontend
 npm install && npm run dev
 ```
 
-Create `backend/.env` for local dev (see `backend/.env.example` for the authoritative list):
+`backend/.env` (see `backend/.env.example` for the authoritative list) — `NER_MODEL_DIR`/`VISION_MODEL_PATH` are optional; leave unset and the app runs on the regex extractor / whole-image OCR instead:
 ```
 DATABASE_URL=postgresql+psycopg2://aegis:aegis@localhost:5432/aegis
-TESSERACT_CMD=            # leave unset to auto-detect via `shutil.which("tesseract")`
+TESSERACT_CMD=            # leave unset to auto-detect
 NER_MODEL_DIR=            # optional, path to a fine-tuned NER model
 VISION_MODEL_PATH=        # optional, path to a fine-tuned vision model
 SESSION_COOKIE_NAME=aegis_session_id
 CORS_ORIGINS=["http://localhost:3000","http://localhost:3001"]
 ```
-Both ML paths (`NER_MODEL_DIR`, `VISION_MODEL_PATH`) are optional — leave them unset and the app falls back to the regex NER extractor and whole-image OCR respectively, so it's fully functional without any trained model.
 
-Create `frontend/.env.local` for local dev (optional — defaults to `http://localhost:8000`):
+`frontend/.env.local` (optional — defaults to `http://localhost:8000`):
 ```
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
@@ -161,18 +119,14 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 
 ## Deployment
 
-**Frontend (Vercel):** import the repo, set the root directory to `frontend/`, and set the `NEXT_PUBLIC_API_BASE_URL` environment variable to the deployed backend's URL.
+**Frontend (Vercel):** import the repo, root directory `frontend/`, set `NEXT_PUBLIC_API_BASE_URL` to the deployed backend's URL.
 
-**Backend (Render or Railway):** deploy `backend/` (Dockerfile included) with a managed Postgres add-on. Required environment variables:
+**Backend (Render or Railway):** deploy `backend/` (Dockerfile included) with a managed Postgres add-on. Same env vars as local dev, plus:
 ```
-DATABASE_URL=<provided by the Postgres add-on>
+DATABASE_URL=<from the Postgres add-on>
 CORS_ORIGINS=["https://<your-vercel-app>.vercel.app"]
-SESSION_COOKIE_NAME=aegis_session_id
-TESSERACT_CMD=            # leave unset to auto-detect on the host image
-NER_MODEL_DIR=            # optional, path to a fine-tuned NER model
-VISION_MODEL_PATH=        # optional, path to a fine-tuned vision model
 ```
-The session cookie is set with `samesite="none", secure=True` specifically so it survives the cross-origin Vercel-to-Render/Railway hop — don't relax this back to `"lax"` unless the frontend and backend end up sharing a domain.
+The session cookie uses `samesite="none", secure=True` specifically so it survives the cross-origin Vercel↔Render/Railway hop — don't relax to `"lax"` unless frontend and backend end up sharing a domain.
 
 ---
 
