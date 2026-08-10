@@ -1,13 +1,19 @@
-# AEGIS — Personal Privacy Intelligence Engine
-### YaleHack 2026 · Solo Project by Daniel Kwan
+# Aegis | Personal Privacy Intelligence Shield
+### YHack 2026 Winner @ Yale University
 
-> "We don't need to hack your phone. We just need to read your Instagram."
+# Devpost
+https://devpost.com/software/aegis-68rmo0
 
-Aegis is a real-time OSINT and machine learning tool that detects **Identity Links** — cross-post patterns of location, time, and activity that allow a threat actor to reconstruct your daily routine from public social media alone.
+# Authors
+Daniel Kwan (@danielkwan-dev)
 
-Individual posts are not the vulnerability. The statistical pattern across dozens of posts is.
+# About
+
+Aegis is a real-time OSINT (Open-Source Intelligence) and machine learning tool that detects **Identity Links** — cross-post patterns of location, time, and activity that allow a threat actor to reconstruct your daily routine from public social media alone.
 
 ---
+# Demo
+https://youtu.be/Nf_50lff9Rc
 
 ## The Problem
 
@@ -53,8 +59,7 @@ Standard security tooling covers network intrusion, malware, and credential thef
 - OSINT scraping — Instagram via Instaloader, OCR via Tesseract, EXIF via Pillow
 - TF-IDF cosine similarity threat scoring across three signal categories
 - KMeans behavioral clustering and entity triplet detection
-- Force-directed Stalker's Web graph of entity relationships
-- Hex.tech API integration — automated intelligence brief on every analysis run
+- Hex.tech API integration — automated intelligence brief on every analysis run and "Stalker's Web" graph of entity relationships
 - Async background processing — results return in under one second
 - Persistent breach probability history via JSONBlob
 
@@ -113,7 +118,7 @@ HISTORY_BLOB_ID=              # auto-created on first run
 
 Use handle **`@aegis_yhack`** — no real Instagram account needed. Then analyze:
 
-> "Grabbing my usual morning coffee on Market Street before work"
+> "Grabbing my usual morning coffee down on Market Street"
 
 Triggers a Critical-level breach detection showing how one sentence, cross-referenced against a baseline corpus, reconstructs a full daily routine.
 
