@@ -9,12 +9,14 @@ frontend/out/
 *.local
 .env
 .env.*
+!.env.example
 !.env.local.example
 
 # Python
-backend/__pycache__/
-backend/*.pyc
+**/__pycache__/
+*.pyc
 backend/venv/
+backend/*.db
 
 # Logs
 *.log
