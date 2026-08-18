@@ -1,0 +1,23 @@
+# Heavy training-only deps -- deliberately kept out of backend/requirements.txt
+# (the serving app only ever loads exported ONNX weights via onnxruntime,
+# it never needs torch/transformers/datasets at request time).
+
+# Weak-label bootstrapping
+datasets>=2.19
+pandas
+
+# Fine-tuning (Colab already has a matching torch+CUDA build preinstalled --
+# don't pip install torch there, just install the rest on top of it)
+transformers>=4.40
+accelerate>=0.30
+seqeval
+
+# ONNX export + quantization
+optimum[onnxruntime]>=1.19
+
+# Vision fine-tuning (YOLOv8n storefront/sign detector)
+ultralytics>=8.2
+roboflow>=1.1
+onnxruntime>=1.18
+
+pytest

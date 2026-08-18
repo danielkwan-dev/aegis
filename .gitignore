@@ -4,6 +4,7 @@ node_modules/
 # Next.js
 frontend/.next/
 frontend/out/
+frontend/*.tsbuildinfo
 
 # Env files
 *.local
@@ -17,6 +18,13 @@ frontend/out/
 *.pyc
 backend/venv/
 backend/*.db
+.pytest_cache/
+
+# ML training -- heavy local env + generated model weights (weights get
+# published to Hugging Face Hub, not committed here). Training *data*
+# (ml_training/data/) IS tracked -- it's a real project artifact.
+backend/ml_training/venv/
+backend/ml_training/models/
 
 # Logs
 *.log
