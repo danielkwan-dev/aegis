@@ -18,8 +18,8 @@ from app.services.correlation import (
     detect_static_landmarks,
     scan_entity_triplets,
 )
-from app.services.entity_extraction import extract_entities
 from app.services.graph import build_exposure_map
+from app.services.ner_inference import extract_entities_hybrid
 from app.services.similarity import compute_category_similarity
 from app.services.vision import (
     extract_exif_metadata,
@@ -63,7 +63,7 @@ def ingest_data_point(
         return {"status": "empty", "message": "No data to ingest."}
 
     all_text = f"{text} {ocr_text}".strip()
-    entities = extract_entities(all_text)
+    entities = extract_entities_hybrid(all_text)
     time_ctx = infer_time_context(metadata, entities)
 
     entry = footprint.ingest(
@@ -121,7 +121,7 @@ def analyze_threat(
         }
 
     all_text = f"{draft_text} {ocr_text}".strip()
-    new_entities = extract_entities(all_text)
+    new_entities = extract_entities_hybrid(all_text)
     new_time_ctx = infer_time_context(metadata, new_entities)
 
     baseline = footprint.entries

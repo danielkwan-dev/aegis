@@ -13,7 +13,7 @@ from PIL.ExifTags import GPSTAGS, TAGS
 
 from app.core.config import get_settings
 from app.services.detection import SignageDetector
-from app.services.entity_extraction import extract_entities
+from app.services.ner_inference import extract_entities_hybrid
 
 _settings = get_settings()
 _tesseract_cmd = _settings.tesseract_cmd or shutil.which("tesseract")
@@ -33,7 +33,7 @@ def extract_ocr_text(image_bytes: bytes) -> str:
 
 def extract_ocr_entities(ocr_text: str) -> dict:
     """Run entity extraction on OCR text, flagging high-value finds."""
-    entities = extract_entities(ocr_text)
+    entities = extract_entities_hybrid(ocr_text)
 
     high_value = []
     if entities["streets"]:

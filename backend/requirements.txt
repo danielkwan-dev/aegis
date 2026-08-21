@@ -6,6 +6,7 @@ pydantic-settings==2.3.4
 pytesseract==0.3.13
 Pillow==11.1.0
 onnxruntime==1.19.2
+tokenizers==0.19.1
 scikit-learn==1.6.1
 numpy==2.2.4
 sqlalchemy==2.0.30

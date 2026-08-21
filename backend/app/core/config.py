@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # the OCR cascade falls back to whole-image OCR until then.
     vision_model_path: str | None = None
 
+    # Directory containing the fine-tuned DistilBERT NER model, exported to
+    # ONNX + quantized (expects model.onnx + tokenizer.json inside). Unset
+    # until the Colab training run in ml_training/ner/ has produced one —
+    # entity extraction falls back to regex/keyword matching until then.
+    ner_model_dir: str | None = None
+
     session_cookie_name: str = "aegis_session_id"
 
     cors_origins: list[str] = [
