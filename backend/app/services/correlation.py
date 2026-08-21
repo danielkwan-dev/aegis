@@ -13,6 +13,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.services.entity_extraction import ACTIVITY_KEYWORDS
+from app.services.spatial import cluster_coordinates
 
 
 class FootprintLike(Protocol):
@@ -25,8 +26,18 @@ class FootprintLike(Protocol):
 
 def detect_static_landmarks(footprint: FootprintLike) -> list[dict]:
     """
-    If the same street name or coordinates appear in >20% of the footprint,
-    tag them as Static Landmarks (likely Home or Work).
+    Street names appearing in >20% of the footprint are tagged as Static
+    Landmarks (likely Home or Work) -- unchanged, frequency-based.
+
+    GPS coordinates are clustered via DBSCAN+Haversine (see app.services.
+    spatial) into two distinct signal types, not one conflated score:
+      - "routine_exposure": a dense cluster (2+ visits to the same spot) --
+        high risk because it's *predictable*.
+      - "anomalous_disclosure": one-off locations that don't repeat
+        anywhere else -- not a routine, so not the same risk category, but
+        surfaced as a single aggregate finding (not one per point) since a
+        typical footprint has many mundane one-off locations and flagging
+        each individually would just be noise.
     """
     total = footprint.count
     if total < 2:
@@ -55,29 +66,35 @@ def detect_static_landmarks(footprint: FootprintLike) -> list[dict]:
                 "classification": "Home/Work Static Landmark",
             })
 
-    # Coordinate clustering (within ~200m ≈ 0.002 degrees)
+    # Geospatial clustering
     coords = footprint.all_coordinates()
     if len(coords) >= 2:
-        coord_clusters: list[dict] = []
-        for c in coords:
-            matched = False
-            for cluster in coord_clusters:
-                if abs(c["lat"] - cluster["lat"]) < 0.002 and abs(c["lon"] - cluster["lon"]) < 0.002:
-                    cluster["count"] += 1
-                    matched = True
-                    break
-            if not matched:
-                coord_clusters.append({"lat": c["lat"], "lon": c["lon"], "count": 1})
+        spatial_result = cluster_coordinates(coords)
 
-        for cluster in coord_clusters:
-            if cluster["count"] / total >= threshold:
-                landmarks.append({
-                    "type": "coordinates",
-                    "value": {"lat": cluster["lat"], "lon": cluster["lon"]},
-                    "appearances": cluster["count"],
-                    "percentage": round(cluster["count"] / total * 100, 1),
-                    "classification": "GPS Static Landmark",
-                })
+        # Every dense cluster is a routine, regardless of what % of the
+        # footprint it represents -- DBSCAN's min_samples already encodes
+        # "this recurs," which is what the old 20% threshold was a (cruder)
+        # proxy for.
+        for cluster in spatial_result["clusters"]:
+            landmarks.append({
+                "type": "coordinates",
+                "value": cluster["centroid"],
+                "appearances": cluster["size"],
+                "percentage": cluster["percentage"],
+                "classification": "Routine Exposure (GPS)",
+                "signal": "routine_exposure",
+            })
+
+        noise_points = spatial_result["noise_points"]
+        if noise_points:
+            landmarks.append({
+                "type": "coordinates",
+                "value": {"noise_count": len(noise_points)},
+                "appearances": len(noise_points),
+                "percentage": round(len(noise_points) / total * 100, 1),
+                "classification": "Anomalous Disclosure (GPS)",
+                "signal": "anomalous_disclosure",
+            })
 
     return landmarks
 

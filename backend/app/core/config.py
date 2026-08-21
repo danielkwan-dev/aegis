@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     # If unset, resolved at runtime via shutil.which("tesseract") — no hardcoded install path.
     tesseract_cmd: str | None = None
 
+    # Fine-tuned YOLOv8n signage/storefront detector (quantized ONNX). Unset
+    # until the Colab training run in ml_training/vision/ has produced one —
+    # the OCR cascade falls back to whole-image OCR until then.
+    vision_model_path: str | None = None
+
     session_cookie_name: str = "aegis_session_id"
 
     cors_origins: list[str] = [

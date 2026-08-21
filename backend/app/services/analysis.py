@@ -24,10 +24,10 @@ from app.services.similarity import compute_category_similarity
 from app.services.vision import (
     extract_exif_metadata,
     extract_ocr_entities,
-    extract_ocr_text,
     infer_time_context,
     merge_signals,
     metadata_to_text,
+    run_ocr_cascade,
 )
 from app.services.vulnerability import generate_vulnerability_map
 
@@ -53,7 +53,7 @@ def ingest_data_point(
     ocr_text = ""
     metadata: dict = {}
     if image_bytes:
-        ocr_text = extract_ocr_text(image_bytes)
+        ocr_text = run_ocr_cascade(image_bytes)["text"]
         metadata = extract_exif_metadata(image_bytes)
 
     metadata_text = metadata_to_text(metadata)
@@ -104,7 +104,7 @@ def analyze_threat(
     metadata: dict = {}
     ocr_entities: dict | None = None
     if image_bytes:
-        ocr_text = extract_ocr_text(image_bytes)
+        ocr_text = run_ocr_cascade(image_bytes)["text"]
         metadata = extract_exif_metadata(image_bytes)
         if ocr_text:
             ocr_entities = extract_ocr_entities(ocr_text)

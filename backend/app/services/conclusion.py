@@ -13,7 +13,7 @@ def generate_conclusion(
     Synthesize entity triplets and vulnerability findings into a
     concrete, conversational conclusion that reads like a stalker's notes.
     """
-    if not triplets and not vulnerability_map:
+    if not triplets and not vulnerability_map and not static_landmarks:
         return "Baseline established. No recurring routine detected yet."
 
     lines: list[str] = []
@@ -69,6 +69,12 @@ def generate_conclusion(
                     f"{name} appears in {pct}% of your posts. "
                     f"Someone watching you would flag this as a regular stop."
                 )
+        elif lm["type"] == "coordinates" and lm.get("signal") == "anomalous_disclosure":
+            lines.append(
+                f"{lm['appearances']} of your photos were taken at locations that don't "
+                f"repeat anywhere else in your footprint. Each is low-risk alone -- it's not "
+                f"a pattern -- but a single unusual location can still say more than you'd expect."
+            )
         elif lm["type"] == "coordinates":
             lines.append(
                 f"Your photos keep pinging the same GPS coordinates "

@@ -5,12 +5,14 @@ from __future__ import annotations
 import io
 import shutil
 from datetime import datetime
+from typing import Protocol
 
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageOps
 from PIL.ExifTags import GPSTAGS, TAGS
 
 from app.core.config import get_settings
+from app.services.detection import SignageDetector
 from app.services.entity_extraction import extract_entities
 
 _settings = get_settings()
@@ -145,3 +147,81 @@ def metadata_to_text(metadata: dict) -> str:
 def merge_signals(draft_text: str, ocr_text: str, metadata_text: str) -> str:
     parts = [p for p in [draft_text, ocr_text, metadata_text] if p]
     return " . ".join(parts)
+
+
+class DetectorLike(Protocol):
+    available: bool
+
+    def detect(self, image_bytes: bytes) -> list[dict]: ...
+
+
+MIN_OCR_DIMENSION = 200
+
+_default_detector: SignageDetector | None = None
+
+
+def _get_default_detector() -> SignageDetector:
+    global _default_detector
+    if _default_detector is None:
+        _default_detector = SignageDetector(_settings.vision_model_path)
+    return _default_detector
+
+
+def crop_with_padding(image: Image.Image, bbox: tuple[float, float, float, float], *, padding_ratio: float = 0.1) -> Image.Image:
+    """Crop `bbox` out of `image` with a margin (signage detectors tend to
+    draw tight boxes right at the glyph edges, which clips characters),
+    clamped to the image bounds."""
+    x1, y1, x2, y2 = bbox
+    pad_x, pad_y = (x2 - x1) * padding_ratio, (y2 - y1) * padding_ratio
+    orig_w, orig_h = image.size
+    left = max(0, int(x1 - pad_x))
+    top = max(0, int(y1 - pad_y))
+    right = min(orig_w, int(x2 + pad_x))
+    bottom = min(orig_h, int(y2 + pad_y))
+    return image.crop((left, top, right, bottom))
+
+
+def preprocess_crop_for_ocr(image: Image.Image) -> Image.Image:
+    """Upscale small crops and boost contrast -- Tesseract does noticeably
+    better on a scaled, high-contrast grayscale crop than on a small raw
+    color crop straight off a detector."""
+    w, h = image.size
+    if 0 < min(w, h) < MIN_OCR_DIMENSION:
+        scale = MIN_OCR_DIMENSION / min(w, h)
+        image = image.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+    return ImageOps.autocontrast(ImageOps.grayscale(image))
+
+
+def run_ocr_cascade(image_bytes: bytes, *, detector: DetectorLike | None = None) -> dict:
+    """detect -> crop -> preprocess -> OCR cascade.
+
+    Falls back to whole-image OCR (the original behavior) when no signage
+    detector model is available yet -- the YOLOv8n fine-tune is Colab-only
+    and hasn't been trained/published yet -- or when the detector finds
+    nothing in-frame, so the app works end-to-end without the fine-tuned
+    model and gets sharper OCR once it exists.
+    """
+    detector = detector or _get_default_detector()
+
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception:
+        return {"text": "", "crops": []}
+
+    detections = detector.detect(image_bytes) if detector.available else []
+    if not detections:
+        return {"text": extract_ocr_text(image_bytes), "crops": []}
+
+    crops: list[dict] = []
+    texts: list[str] = []
+    for det in detections:
+        crop = preprocess_crop_for_ocr(crop_with_padding(image, det["bbox"]))
+        buf = io.BytesIO()
+        crop.save(buf, format="PNG")
+        text = extract_ocr_text(buf.getvalue())
+        if text:
+            texts.append(text)
+        crops.append({"bbox": det["bbox"], "confidence": det["confidence"], "text": text})
+
+    merged_text = " . ".join(dict.fromkeys(texts))
+    return {"text": merged_text, "crops": crops}
