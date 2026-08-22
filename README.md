@@ -88,7 +88,7 @@ Aegis won YHack 2026, but the original build had real hackathon debt: hardcoded 
 | Analytics dashboard | Hex.tech notebook embed (backend round-trip) | Backend dependency fully removed — analysis runs synchronously, no external call |
 | Testing | None | 61 unit tests |
 
-**Known limitation, not yet addressed:** the frontend's `HexDashboard.tsx` component is still imported and rendered in `AuditResult.tsx`, hardcoded to the original author's Hex.tech embed URL. It's now orphaned — the backend no longer sends it data — and needs to be removed or replaced with an in-house visualization built on the data the API already returns. Everything else in the table above is done.
+This frontend rebuild removed the orphaned `HexDashboard.tsx` entirely and replaced it with an in-house UI (see `docs/superpowers/specs/2026-08-21-frontend-rebuild-design.md`). Every item in the table above is now done.
 
 ---
 
@@ -129,16 +129,27 @@ cd frontend
 npm install && npm run dev
 ```
 
-Create `backend/.env` (see `backend/.env.example`):
+Create `frontend/.env.local` for local dev (optional — defaults to `http://localhost:8000`):
 ```
-DATABASE_URL=postgresql+psycopg2://aegis:aegis@localhost:5432/aegis
-TESSERACT_CMD=                # leave unset to auto-detect
-VISION_MODEL_PATH=            # path to a fine-tuned YOLOv8n ONNX file, optional
-NER_MODEL_DIR=                # path to a fine-tuned NER model dir, optional
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+```
+
+---
+
+## Deployment
+
+**Frontend (Vercel):** import the repo, set the root directory to `frontend/`, and set the `NEXT_PUBLIC_API_BASE_URL` environment variable to the deployed backend's URL.
+
+**Backend (Render or Railway):** deploy `backend/` (Dockerfile included) with a managed Postgres add-on. Required environment variables:
+```
+DATABASE_URL=<provided by the Postgres add-on>
+CORS_ORIGINS=["https://<your-vercel-app>.vercel.app"]
 SESSION_COOKIE_NAME=aegis_session_id
-CORS_ORIGINS=["http://localhost:3000","http://localhost:3001"]
+TESSERACT_CMD=            # leave unset to auto-detect on the host image
+NER_MODEL_DIR=            # optional, path to a fine-tuned NER model
+VISION_MODEL_PATH=        # optional, path to a fine-tuned vision model
 ```
-Both ML paths are optional — the app runs fully functional on the regex/whole-image-OCR fallback path with either or both unset.
+The session cookie is set with `samesite="none", secure=True` specifically so it survives the cross-origin Vercel-to-Render/Railway hop — don't relax this back to `"lax"` unless the frontend and backend end up sharing a domain.
 
 ---
 
@@ -165,14 +176,22 @@ aegis/
 │   ├── tests/                  # 61 pytest unit tests
 │   └── docker-compose.yml
 └── frontend/
-    ├── app/                     # Next.js app router
-    └── components/
-        ├── SimulateForm.tsx      # ingestion + analysis trigger
-        ├── AuditResult.tsx       # threat report
-        ├── StalkerWeb.tsx        # entity relationship graph
-        ├── RiskGauge.tsx         # breach probability gauge
-        ├── ScoreTracker.tsx      # score history
-        └── HexDashboard.tsx      # orphaned — see Known Limitations above
+    ├── app/                     # Next.js app router (single page)
+    ├── components/
+    │   ├── ui/                   # shadcn/ui primitives
+    │   ├── footprint-summary.tsx
+    │   ├── ingestion-panel.tsx
+    │   ├── analysis-form.tsx
+    │   ├── breach-gauge.tsx
+    │   ├── findings-list.tsx
+    │   ├── conclusion-narrative.tsx
+    │   ├── score-history-chart.tsx
+    │   ├── entity-graph.tsx
+    │   └── empty-state.tsx
+    └── lib/
+        ├── api.ts                 # typed fetch client
+        ├── api-types.ts           # backend response types
+        └── hooks/                 # TanStack Query hooks
 ```
 
 ---
