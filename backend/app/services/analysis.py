@@ -131,6 +131,7 @@ def analyze_threat(
             "message": "No footprint data yet. Use /api/ingest/manual to build your exposure map first.",
             "detected_entities": {
                 "streets": new_entities["streets"],
+                "places": new_entities["places"],
                 "businesses": new_entities["businesses"],
                 "times": new_entities["times"],
                 "coordinates": new_entities["coordinates"],

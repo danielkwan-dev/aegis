@@ -8,6 +8,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
     globals: true,
+    restoreMocks: true,
     // pool: "threads" avoids a worker-startup timeout with the default
     // "forks" pool that occurs in this environment because the repo path
     // contains a space (C:\Users\Daniel Kwan\...); threads runs reliably.

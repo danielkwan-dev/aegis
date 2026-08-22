@@ -36,8 +36,17 @@ export default function Home() {
 
           {!result && <EmptyState />}
 
-          {result && result.status !== "analyzed" && (
-            <p className="text-sm text-muted-foreground">{result.message}</p>
+          {result && result.status === "initializing" && (
+            <p className="text-sm text-muted-foreground">
+              Add a few baseline posts on the left before analyzing a draft — that&apos;s what
+              lets Aegis detect patterns.
+            </p>
+          )}
+
+          {result && result.status === "empty" && (
+            <p className="text-sm text-muted-foreground">
+              Add some text or an image to analyze.
+            </p>
           )}
 
           {result && result.status === "analyzed" && (

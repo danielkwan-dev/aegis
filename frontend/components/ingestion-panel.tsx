@@ -36,18 +36,23 @@ export function IngestionPanel() {
 
 function ManualEntryForm() {
   const [text, setText] = useState("");
+  const [label, setLabel] = useState("");
   const [image, setImage] = useState<File | null>(null);
+  const [resetKey, setResetKey] = useState(0);
   const mutation = useIngestManual();
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const formData = new FormData();
     formData.set("text", text);
+    if (label.trim()) formData.set("label", label);
     if (image) formData.set("image", image);
     mutation.mutate(formData, {
       onSuccess: () => {
         setText("");
+        setLabel("");
         setImage(null);
+        setResetKey((k) => k + 1);
       },
     });
   }
@@ -61,11 +66,21 @@ function ManualEntryForm() {
         rows={3}
       />
       <label className="text-sm text-muted-foreground">
+        Label this entry (optional)
+        <input
+          type="text"
+          placeholder="Label this entry (optional)"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          className="mt-1 block w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+        />
+      </label>
+      <label className="text-sm text-muted-foreground">
         Optional image
         <input
+          key={resetKey}
           type="file"
           accept="image/*"
-          aria-label="manual entry image"
           onChange={(e) => setImage(e.target.files?.[0] ?? null)}
           className="mt-1 block text-sm"
         />
@@ -89,6 +104,8 @@ function ManualEntryForm() {
 
 function ExportImportForm() {
   const [file, setFile] = useState<File | null>(null);
+  const [maxPosts, setMaxPosts] = useState(50);
+  const [resetKey, setResetKey] = useState(0);
   const mutation = useIngestExport();
 
   function handleSubmit(e: React.FormEvent) {
@@ -96,7 +113,13 @@ function ExportImportForm() {
     if (!file) return;
     const formData = new FormData();
     formData.set("file", file);
-    mutation.mutate(formData, { onSuccess: () => setFile(null) });
+    formData.set("max_posts", String(maxPosts));
+    mutation.mutate(formData, {
+      onSuccess: () => {
+        setFile(null);
+        setResetKey((k) => k + 1);
+      },
+    });
   }
 
   return (
@@ -104,11 +127,21 @@ function ExportImportForm() {
       <label className="text-sm text-muted-foreground">
         Instagram data export (.zip)
         <input
+          key={resetKey}
           type="file"
           accept=".zip"
-          aria-label="export file"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           className="mt-1 block text-sm"
+        />
+      </label>
+      <label className="text-sm text-muted-foreground">
+        Max posts to import
+        <input
+          type="number"
+          placeholder="Max posts to import"
+          value={maxPosts}
+          onChange={(e) => setMaxPosts(Number(e.target.value))}
+          className="mt-1 block w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
         />
       </label>
       <Button type="submit" disabled={mutation.isPending || !file}>

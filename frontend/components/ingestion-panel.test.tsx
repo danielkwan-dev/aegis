@@ -23,10 +23,16 @@ describe("IngestionPanel", () => {
     fireEvent.change(screen.getByPlaceholderText(/grabbing my usual/i), {
       target: { value: "Coffee on Market Street" },
     });
+    fireEvent.change(screen.getByPlaceholderText(/label this entry/i), {
+      target: { value: "Morning routine" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /add to baseline/i }));
 
     await waitFor(() => expect(screen.getByText("Data Point Secured")).toBeInTheDocument());
     expect(api.ingestManual).toHaveBeenCalled();
+    const formData = vi.mocked(api.ingestManual).mock.calls[0][0];
+    expect(formData.get("text")).toBe("Coffee on Market Street");
+    expect(formData.get("label")).toBe("Morning routine");
   });
 
   it("switches to the export tab and submits a zip file", async () => {
@@ -45,13 +51,18 @@ describe("IngestionPanel", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /import export/i }));
     const file = new File(["zip-bytes"], "export.zip", { type: "application/zip" });
-    const fileInput = screen.getByLabelText(/export file/i) as HTMLInputElement;
+    const fileInput = screen.getByLabelText(/instagram data export/i) as HTMLInputElement;
     fireEvent.change(fileInput, { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText(/max posts to import/i), {
+      target: { value: "25" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /import export/i }));
 
     await waitFor(() =>
       expect(screen.getByText(/10 posts ingested, 0 skipped/i)).toBeInTheDocument(),
     );
+    const formData = vi.mocked(api.ingestExport).mock.calls[0][0];
+    expect(formData.get("max_posts")).toBe("25");
   });
 
   it("disables the manual submit button when the text field is empty", () => {
@@ -83,7 +94,7 @@ describe("IngestionPanel", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /import export/i }));
     const file = new File(["zip-bytes"], "export.zip", { type: "application/zip" });
-    const fileInput = screen.getByLabelText(/export file/i) as HTMLInputElement;
+    const fileInput = screen.getByLabelText(/instagram data export/i) as HTMLInputElement;
     fireEvent.change(fileInput, { target: { files: [file] } });
     fireEvent.click(screen.getByRole("button", { name: /import export/i }));
 

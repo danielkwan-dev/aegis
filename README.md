@@ -62,8 +62,8 @@ Full training pipeline (weak-label bootstrapping, hand-correction workflow, Cola
 ## Architecture
 
 - **Backend**: Python, FastAPI, layered architecture (`api/` routers → `services/` business logic → `db/`/`models/` persistence), PostgreSQL via SQLAlchemy, Docker Compose for local dev. Per-session state (not a global in-memory store) — each analysis session's footprint is scoped and persisted.
-- **Frontend**: Next.js 14, TypeScript, TailwindCSS, Framer Motion, `react-force-graph-2d` for the entity-relationship "Stalker's Web" graph.
-- **Testing**: 61 pytest unit tests. ML inference, external HTTP calls, and geospatial math are all dependency-injected and unit-testable without live models, weights, or network access.
+- **Frontend**: Next.js 14, TypeScript, TailwindCSS, Framer Motion, `shadcn/ui` components, TanStack Query for server state, Recharts for the score-history chart, `react-force-graph-2d` for the entity-relationship graph visualization.
+- **Testing**: 63 pytest unit tests on the backend. ML inference, external HTTP calls, and geospatial math are all dependency-injected and unit-testable without live models, weights, or network access. The frontend rebuild carries its own 37 Vitest/Testing Library unit tests covering components, hooks, and the composed page.
 
 ### Data ingestion — no live scraping
 
@@ -86,7 +86,7 @@ Aegis won YHack 2026, but the original build had real hackathon debt: hardcoded 
 | Location resolution | Hardcoded 10-entry coordinate dict | Nominatim geocoding, Postgres-cached |
 | Persistence | In-memory store + JSONBlob | PostgreSQL |
 | Analytics dashboard | Hex.tech notebook embed (backend round-trip) | Backend dependency fully removed — analysis runs synchronously, no external call |
-| Testing | None | 61 unit tests |
+| Testing | None | 63 backend + 37 frontend unit tests |
 
 This frontend rebuild removed the orphaned `HexDashboard.tsx` entirely and replaced it with an in-house UI (see `docs/superpowers/specs/2026-08-21-frontend-rebuild-design.md`). Every item in the table above is now done.
 
@@ -108,7 +108,9 @@ This frontend rebuild removed the orphaned `HexDashboard.tsx` entirely and repla
 - Trained on Google Colab (free T4 GPU), models published to Hugging Face Hub
 
 **Frontend**
-- Next.js 14, TypeScript, TailwindCSS, Framer Motion, `react-force-graph-2d`
+- Next.js 14, TypeScript, TailwindCSS, Framer Motion
+- `shadcn/ui` — component primitives; TanStack Query — server state/caching for API calls
+- Recharts — score-history chart; `react-force-graph-2d` — entity-relationship graph visualization
 
 ---
 
@@ -128,6 +130,17 @@ uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install && npm run dev
 ```
+
+Create `backend/.env` for local dev (see `backend/.env.example` for the authoritative list):
+```
+DATABASE_URL=postgresql+psycopg2://aegis:aegis@localhost:5432/aegis
+TESSERACT_CMD=            # leave unset to auto-detect via `shutil.which("tesseract")`
+NER_MODEL_DIR=            # optional, path to a fine-tuned NER model
+VISION_MODEL_PATH=        # optional, path to a fine-tuned vision model
+SESSION_COOKIE_NAME=aegis_session_id
+CORS_ORIGINS=["http://localhost:3000","http://localhost:3001"]
+```
+Both ML paths (`NER_MODEL_DIR`, `VISION_MODEL_PATH`) are optional — leave them unset and the app falls back to the regex NER extractor and whole-image OCR respectively, so it's fully functional without any trained model.
 
 Create `frontend/.env.local` for local dev (optional — defaults to `http://localhost:8000`):
 ```
@@ -173,7 +186,7 @@ aegis/
 │   │   │                       # ONNX export, benchmark
 │   │   ├── vision/              # dataset download, YOLOv8n training
 │   │   └── COLAB.md            # step-by-step training instructions
-│   ├── tests/                  # 61 pytest unit tests
+│   ├── tests/                  # 63 pytest unit tests
 │   └── docker-compose.yml
 └── frontend/
     ├── app/                     # Next.js app router (single page)
