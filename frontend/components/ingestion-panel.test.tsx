@@ -59,4 +59,34 @@ describe("IngestionPanel", () => {
 
     expect(screen.getByRole("button", { name: /add to baseline/i })).toBeDisabled();
   });
+
+  it("shows an error message when manual entry submission fails", async () => {
+    vi.spyOn(api, "ingestManual").mockRejectedValue(new Error("network down"));
+
+    renderWithQueryClient(<IngestionPanel />);
+
+    fireEvent.change(screen.getByPlaceholderText(/grabbing my usual/i), {
+      target: { value: "test post" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add to baseline/i }));
+
+    await waitFor(() => expect(screen.getByText("network down")).toBeInTheDocument());
+  });
+
+  it("shows the backend's in-band error message when export import fails", async () => {
+    vi.spyOn(api, "ingestExport").mockResolvedValue({
+      status: "error",
+      message: "not a valid zip file",
+    });
+
+    renderWithQueryClient(<IngestionPanel />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /import export/i }));
+    const file = new File(["zip-bytes"], "export.zip", { type: "application/zip" });
+    const fileInput = screen.getByLabelText(/export file/i) as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: /import export/i }));
+
+    await waitFor(() => expect(screen.getByText("not a valid zip file")).toBeInTheDocument());
+  });
 });
