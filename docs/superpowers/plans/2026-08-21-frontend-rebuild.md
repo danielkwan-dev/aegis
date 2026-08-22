@@ -1152,7 +1152,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body>
         <Providers>{children}</Providers>
       </body>
@@ -1160,6 +1160,8 @@ export default function RootLayout({
   );
 }
 ```
+
+**Post-Task-2 addendum:** `className="dark"` on `<html>` was added after Task 2's review found that shadcn's generated `globals.css` ships a light `:root` with dark values gated behind a `.dark` class — without this, every `shadcn/ui` primitive from Task 2 onward would render in light mode, violating the Global Constraint "Dark theme only." This is the fix for that.
 
 - [ ] **Step 3: Verify it compiles**
 
