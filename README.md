@@ -63,7 +63,7 @@ Full training pipeline (weak-label bootstrapping, hand-correction workflow, Cola
 
 - **Backend**: Python, FastAPI, layered architecture (`api/` routers → `services/` business logic → `db/`/`models/` persistence), PostgreSQL via SQLAlchemy, Docker Compose for local dev. Per-session state (not a global in-memory store) — each analysis session's footprint is scoped and persisted.
 - **Frontend**: Next.js 14, TypeScript, TailwindCSS, Framer Motion, `shadcn/ui` components, TanStack Query for server state, Recharts for the score-history chart, `react-force-graph-2d` for the entity-relationship graph visualization.
-- **Testing**: 63 pytest unit tests on the backend. ML inference, external HTTP calls, and geospatial math are all dependency-injected and unit-testable without live models, weights, or network access. The frontend rebuild carries its own 37 Vitest/Testing Library unit tests covering components, hooks, and the composed page.
+- **Testing**: 63 pytest unit tests on the backend. ML inference, external HTTP calls, and geospatial math are all dependency-injected and unit-testable without live models, weights, or network access. The frontend rebuild carries its own 38 Vitest/Testing Library unit tests covering components, hooks, and the composed page.
 
 ### Data ingestion — no live scraping
 
@@ -86,7 +86,7 @@ Aegis won YHack 2026, but the original build had real hackathon debt: hardcoded 
 | Location resolution | Hardcoded 10-entry coordinate dict | Nominatim geocoding, Postgres-cached |
 | Persistence | In-memory store + JSONBlob | PostgreSQL |
 | Analytics dashboard | Hex.tech notebook embed (backend round-trip) | Backend dependency fully removed — analysis runs synchronously, no external call |
-| Testing | None | 63 backend + 37 frontend unit tests |
+| Testing | None | 63 backend + 38 frontend unit tests |
 
 This frontend rebuild removed the orphaned `HexDashboard.tsx` entirely and replaced it with an in-house UI (see `docs/superpowers/specs/2026-08-21-frontend-rebuild-design.md`). Every item in the table above is now done.
 
