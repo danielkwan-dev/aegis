@@ -39,3 +39,6 @@ backend/ml_training/models/
 *.njsproj
 *.sln
 *.sw?
+
+# Local git worktrees (not committed)
+.worktrees/
