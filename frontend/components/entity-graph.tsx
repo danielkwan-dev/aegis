@@ -32,7 +32,7 @@ export function EntityGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
           <ForceGraph2D
             graphData={data}
             nodeLabel="label"
-            nodeColor={(n: { color?: string }) => n.color ?? "#888"}
+            nodeColor={(n: any) => n.color ?? "#888"}
             linkLabel="label"
             width={480}
             height={320}
