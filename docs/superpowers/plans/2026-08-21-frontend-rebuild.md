@@ -42,13 +42,13 @@ frontend/
     test-utils.tsx                   # CREATE
     hooks/
       use-footprint.ts                # CREATE
-      use-footprint.test.ts           # CREATE
+      use-footprint.test.tsxx          # CREATE
       use-score-history.ts            # CREATE
-      use-score-history.test.ts       # CREATE
+      use-score-history.test.tsxx      # CREATE
       use-ingest.ts                   # CREATE
-      use-ingest.test.ts              # CREATE
+      use-ingest.test.tsxx             # CREATE
       use-analyze.ts                  # CREATE
-      use-analyze.test.ts             # CREATE
+      use-analyze.test.tsxx            # CREATE
   components/
     ui/                               # CREATE — shadcn-generated primitives
     providers.tsx                     # CREATE
@@ -782,9 +782,9 @@ git commit -m "Add QueryClient test wrapper utility for hook/component tests"
 
 **Files:**
 - Create: `frontend/lib/hooks/use-footprint.ts`
-- Create: `frontend/lib/hooks/use-footprint.test.ts`
+- Create: `frontend/lib/hooks/use-footprint.test.tsx`
 - Create: `frontend/lib/hooks/use-score-history.ts`
-- Create: `frontend/lib/hooks/use-score-history.test.ts`
+- Create: `frontend/lib/hooks/use-score-history.test.tsx`
 
 **Interfaces:**
 - Consumes: `fetchFootprint`, `fetchScoreHistory` from `lib/api.ts` (Task 4); `renderWithQueryClient` from `lib/test-utils.tsx` (Task 5) is not directly usable for hooks (needs `renderHook`) — tests below wrap `renderHook` with the same `QueryClientProvider` pattern inline.
@@ -792,7 +792,7 @@ git commit -m "Add QueryClient test wrapper utility for hook/component tests"
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `frontend/lib/hooks/use-footprint.test.ts`:
+Create `frontend/lib/hooks/use-footprint.test.tsx`:
 
 ```typescript
 import { renderHook, waitFor } from "@testing-library/react";
@@ -829,7 +829,7 @@ describe("useFootprint", () => {
 });
 ```
 
-Create `frontend/lib/hooks/use-score-history.test.ts`:
+Create `frontend/lib/hooks/use-score-history.test.tsx`:
 
 ```typescript
 import { renderHook, waitFor } from "@testing-library/react";
@@ -867,7 +867,7 @@ describe("useScoreHistory", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd frontend && npx vitest run lib/hooks/use-footprint.test.ts lib/hooks/use-score-history.test.ts`
+Run: `cd frontend && npx vitest run lib/hooks/use-footprint.test.tsx lib/hooks/use-score-history.test.tsx`
 Expected: FAIL — hook modules don't exist yet.
 
 - [ ] **Step 3: Implement the hooks**
@@ -902,13 +902,13 @@ export function useScoreHistory() {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd frontend && npx vitest run lib/hooks/use-footprint.test.ts lib/hooks/use-score-history.test.ts`
+Run: `cd frontend && npx vitest run lib/hooks/use-footprint.test.tsx lib/hooks/use-score-history.test.tsx`
 Expected: both PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/lib/hooks/use-footprint.ts frontend/lib/hooks/use-footprint.test.ts frontend/lib/hooks/use-score-history.ts frontend/lib/hooks/use-score-history.test.ts
+git add frontend/lib/hooks/use-footprint.ts frontend/lib/hooks/use-footprint.test.tsx frontend/lib/hooks/use-score-history.ts frontend/lib/hooks/use-score-history.test.tsx
 git commit -m "Add footprint and score-history query hooks"
 ```
 
@@ -918,9 +918,9 @@ git commit -m "Add footprint and score-history query hooks"
 
 **Files:**
 - Create: `frontend/lib/hooks/use-ingest.ts`
-- Create: `frontend/lib/hooks/use-ingest.test.ts`
+- Create: `frontend/lib/hooks/use-ingest.test.tsx`
 - Create: `frontend/lib/hooks/use-analyze.ts`
-- Create: `frontend/lib/hooks/use-analyze.test.ts`
+- Create: `frontend/lib/hooks/use-analyze.test.tsx`
 
 **Interfaces:**
 - Consumes: `ingestManual`, `ingestExport`, `analyzeThreat` from `lib/api.ts` (Task 4).
@@ -928,7 +928,7 @@ git commit -m "Add footprint and score-history query hooks"
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `frontend/lib/hooks/use-ingest.test.ts`:
+Create `frontend/lib/hooks/use-ingest.test.tsx`:
 
 ```typescript
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -993,7 +993,7 @@ describe("useIngestExport", () => {
 });
 ```
 
-Create `frontend/lib/hooks/use-analyze.test.ts`:
+Create `frontend/lib/hooks/use-analyze.test.tsx`:
 
 ```typescript
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -1031,7 +1031,7 @@ describe("useAnalyze", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd frontend && npx vitest run lib/hooks/use-ingest.test.ts lib/hooks/use-analyze.test.ts`
+Run: `cd frontend && npx vitest run lib/hooks/use-ingest.test.tsx lib/hooks/use-analyze.test.tsx`
 Expected: FAIL — hook modules don't exist yet.
 
 - [ ] **Step 3: Implement the hooks**
@@ -1082,13 +1082,13 @@ export function useAnalyze() {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd frontend && npx vitest run lib/hooks/use-ingest.test.ts lib/hooks/use-analyze.test.ts`
+Run: `cd frontend && npx vitest run lib/hooks/use-ingest.test.tsx lib/hooks/use-analyze.test.tsx`
 Expected: all PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/lib/hooks/use-ingest.ts frontend/lib/hooks/use-ingest.test.ts frontend/lib/hooks/use-analyze.ts frontend/lib/hooks/use-analyze.test.ts
+git add frontend/lib/hooks/use-ingest.ts frontend/lib/hooks/use-ingest.test.tsx frontend/lib/hooks/use-analyze.ts frontend/lib/hooks/use-analyze.test.tsx
 git commit -m "Add ingest and analyze mutation hooks"
 ```
 
