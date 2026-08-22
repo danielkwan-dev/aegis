@@ -42,13 +42,13 @@ frontend/
     test-utils.tsx                   # CREATE
     hooks/
       use-footprint.ts                # CREATE
-      use-footprint.test.tsxx          # CREATE
+      use-footprint.test.tsx          # CREATE
       use-score-history.ts            # CREATE
-      use-score-history.test.tsxx      # CREATE
+      use-score-history.test.tsx      # CREATE
       use-ingest.ts                   # CREATE
-      use-ingest.test.tsxx             # CREATE
+      use-ingest.test.tsx             # CREATE
       use-analyze.ts                  # CREATE
-      use-analyze.test.tsxx            # CREATE
+      use-analyze.test.tsx            # CREATE
   components/
     ui/                               # CREATE — shadcn-generated primitives
     providers.tsx                     # CREATE
