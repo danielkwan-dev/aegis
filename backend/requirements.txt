@@ -12,3 +12,7 @@ numpy==2.2.4
 sqlalchemy==2.0.30
 psycopg2-binary==2.9.9
 httpx==0.27.0
+
+# Test tooling -- was previously only installed ad hoc, missing from this
+# file entirely, so a fresh checkout couldn't run the test suite.
+pytest==8.3.3
