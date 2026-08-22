@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import MatrixRain from "@/components/MatrixRain";
+import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
-  title: "Aegis Security Dashboard",
+  title: "Aegis | Privacy Intelligence Engine",
   description:
-    "Proactive privacy intelligence that prevents accidental doxxing",
+    "Detects Identity Links -- cross-post patterns of location, time, and activity that reveal a daily routine from public social media alone.",
 };
 
 export default function RootLayout({
@@ -14,11 +14,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body style={{ position: "relative" }}>
-        <MatrixRain side="left" width={220} />
-        <MatrixRain side="right" width={220} />
-        <div style={{ position: "relative", zIndex: 1 }}>{children}</div>
+    <html lang="en" className="dark">
+      <body>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
