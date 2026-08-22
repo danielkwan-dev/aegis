@@ -36,7 +36,7 @@ export function ScoreHistoryChart() {
               <XAxis dataKey="index" tick={false} />
               <YAxis domain={[0, 100]} width={30} tick={{ fontSize: 11 }} />
               <Tooltip
-                formatter={(value: number) => [`${value}%`, "Breach probability"]}
+                formatter={(value: any) => [`${value}%`, "Breach probability"]}
                 labelFormatter={(_, payload) => payload?.[0]?.payload?.timestamp ?? ""}
               />
               <Line type="monotone" dataKey="breach_probability" stroke="currentColor" strokeWidth={2} dot={false} />
