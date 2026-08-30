@@ -11,6 +11,16 @@ Aegis detects **Identity Links** — cross-post patterns of location, time, and 
 
 ---
 
+## Screenshots
+
+Current rebuilt frontend, running live against the real backend and fine-tuned NER model:
+
+![Analysis result — breach gauge, severity-grouped findings, and the entity relationship graph](docs/screenshots/analysis-result.png)
+
+![Empty state before any data has been ingested](docs/screenshots/empty-state.png)
+
+---
+
 ## The Problem
 
 Standard security tooling covers network intrusion, malware, and credential theft. Nothing addresses the slow-burn threat of behavioral pattern exposure through social media. A motivated adversary — stalker, investigator, or state actor — doesn't need to compromise a system. They just need to read a feed.
